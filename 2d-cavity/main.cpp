@@ -3,16 +3,16 @@
 
 const int Q = 9;
 const int D = 2;
-const int N = 128;
+const int N = 500;
 const int C = N+3;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 100;
+const double Re_cav = 500;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
 
-const double U_cav_ndim = 0.05; // should be no more than 0.1
+const double U_cav_ndim = 0.1; // should be no more than 0.1
 const double Cu_dim = U_cav_dim/U_cav_ndim;
 const double dx_ndim = 1;
 const double Cl_dim = dx_dim/dx_ndim;
@@ -33,7 +33,7 @@ const double tau_ndim = tau_dim/Ct_dim; // should not be significantly larger th
 const double omega = 1/tau_ndim; // better to be kept below 1.8
 const bool tau_check = (nu_dim == cs_ndim_sq*(tau_ndim - 0.5*dt_dim/Ct_dim)*Cl_dim*Cl_dim/Ct_dim);
 
-const double T_dim = 100;
+const double T_dim = 50;
 const int NT = T_dim/dt_dim;
 
 const double Re_g = U_cav_ndim*dx_ndim/nu_ndim; // should not be significantly larger than O(10)
@@ -96,9 +96,16 @@ void init() {
             feq(U[i][j], rho[i][j], E[q], W[q], cs_ndim_sq);
         }
     }}
-
+    #pragma acc enter data \
+    copyin(E, W, f, fp, U, rho)
 }
 
+void finalize() {
+    #pragma acc exit data \
+    delete(E, W, f, fp, U, rho)
+}
+
+// classical BGK collision operator
 void collision(
     double f[C][C][Q],
     double U[C][C][D],
@@ -108,6 +115,9 @@ void collision(
     double cssq,
     double relax
 ) {
+    #pragma acc parallel loop independent collapse(3) \
+    present(f, U, rho, E, W) \
+    firstprivate(cssq, relax)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
     for (int q = 0; q < Q; q ++) {
@@ -121,6 +131,8 @@ void streaming(
     double fp[C][C][Q],
     const int E[Q][D]
 ) {
+    #pragma acc parallel loop independent collapse(3) \
+    present(f, fp, E)
     for (int i = 1; i < C - 1; i ++) {
     for (int j = 1; j < C - 1; j ++) {
     for (int q = 0; q < Q; q ++) {
@@ -132,6 +144,8 @@ void fbc(
     double f[C][C][Q],
     double u_wall
 ) {
+    #pragma acc parallel loop independent \
+    present(f)
     for (int j = 1; j < C - 1; j ++) {
         int I = 1;
         f[I][j][1] = f[I][j][3];
@@ -142,12 +156,17 @@ void fbc(
         f[I][j][7] = f[I][j][5];
         f[I][j][6] = f[I][j][8];
     }
+    #pragma acc parallel loop independent \
+    present(f)
     for (int i = 1; i < C - 1; i ++) {
         int J = 1;
         f[i][J][2] = f[i][J][4];
         f[i][J][6] = f[i][J][8];
         f[i][J][5] = f[i][J][7];
     }
+    #pragma acc parallel loop independent \
+    present(f) \
+    firstprivate(u_wall)
     for (int i = 2; i < C - 2; i ++) {
         int J = C - 2;
         double r = f[i][J][0] + f[i][J][1] + f[i][J][3] + \
@@ -164,6 +183,8 @@ void meso_to_macro(
     double rho[C][C],
     const int E[Q][D]
 ) {
+    #pragma acc parallel loop independent collapse(2) \
+    present(f, U, rho, E)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
         rho[i][j] = 0;
@@ -180,6 +201,8 @@ void meso_to_macro(
 }
 
 void main_loop() {
+    #pragma acc parallel loop independent collapse(3) \
+    present(fp, f)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
     for (int q = 0; q < Q; q ++) {
@@ -193,6 +216,8 @@ void main_loop() {
 }
 
 void output() {
+    #pragma acc update \
+    self(U, rho)
     FILE *file = fopen("lbm-2d-cavity.csv", "w");
     fprintf(file, "x,y,z,u,v,w,rho\n");
     for (int j = 1; j < C - 1; j ++) {
