@@ -3,15 +3,14 @@
 
 const int Q = 9;
 const int D = 2;
-const int N = 500;
+const int N = 400;
 const int C = N+3;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 500;
+const double Re_cav = 400;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
-
 const double U_cav_ndim = 0.1; // should be no more than 0.1
 const double Cu_dim = U_cav_dim/U_cav_ndim;
 const double dx_ndim = 1;
@@ -19,23 +18,18 @@ const double Cl_dim = dx_dim/dx_ndim;
 const double Ct_dim = Cl_dim/Cu_dim;
 const double dt_ndim = 1;
 const double dt_dim = dt_ndim*Ct_dim;
-
 const double L_cav_ndim = L_cav_dim/Cl_dim;
 const double nu_ndim = U_cav_ndim*L_cav_ndim/Re_cav;
 const double Cnu_dim = Cl_dim*Cu_dim;
 const bool nu_check = (nu_ndim == nu_dim/Cnu_dim);
-
 const double cs_ndim_sq = 1./3;
 const double cs_dim_sq = cs_ndim_sq*Cu_dim*Cu_dim;
-
 const double tau_dim  = nu_dim/cs_dim_sq + 0.5*dt_dim;
 const double tau_ndim = tau_dim/Ct_dim; // should not be significantly larger than 1
 const double omega = 1/tau_ndim; // better to be kept below 1.8
 const bool tau_check = (nu_dim == cs_ndim_sq*(tau_ndim - 0.5*dt_dim/Ct_dim)*Cl_dim*Cl_dim/Ct_dim);
-
 const double T_dim = 50;
 const int NT = T_dim/dt_dim;
-
 const double Re_g = U_cav_ndim*dx_ndim/nu_ndim; // should not be significantly larger than O(10)
 
 
