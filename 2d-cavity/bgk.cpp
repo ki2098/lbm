@@ -3,12 +3,12 @@
 
 const int Q = 9;
 const int D = 2;
-const int N = 400;
+const int N = 128;
 const int C = N+3;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 400;
+const double Re_cav = 1000;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
 const double U_cav_ndim = 0.1; // should be no more than 0.1
@@ -212,7 +212,7 @@ void main_loop() {
 void output() {
     #pragma acc update \
     self(U, rho)
-    FILE *file = fopen("lbm-2d-cavity.csv", "w");
+    FILE *file = fopen("bgk.csv", "w");
     fprintf(file, "x,y,z,u,v,w,rho\n");
     for (int j = 1; j < C - 1; j ++) {
     for (int i = 1; i < C - 1; i ++) {
