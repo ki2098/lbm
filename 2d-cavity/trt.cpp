@@ -5,11 +5,11 @@
 const int Q = 9;
 const int D = 2;
 const int N = 256;
-const int C = N+3;
+const int C = N+2;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 10000;
+const double Re_cav = 5000;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
 const double U_cav_ndim = 0.1; // should be no more than 0.1
@@ -33,7 +33,8 @@ const double T_dim = 100;
 const int NT = T_dim/dt_dim;
 const double Re_g = U_cav_ndim*dx_ndim/nu_ndim; // should not be significantly larger than O(10)
 
-
+const double output_interval_time = 1;
+const int output_interval_step = output_interval_time/dt_dim;
 /**
  * 6 2 5
  * 3 0 1
@@ -92,15 +93,17 @@ void print_info() {
 }
 
 void init() {
-    for (int i = 1; i < C - 1; i ++) {
-        U[i][C-2][0] = U_cav_ndim;
-    }
+    // for (int i = 1; i < C - 1; i ++) {
+    //     U[i][C-2][0] = U_cav_ndim;
+    // }
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
+        U[i][j][0] = 0;
+        U[i][j][1] = 0;
         rho[i][j] = 1;
         for (int q = 0; q < Q; q ++) {
-            f[i][j][q] = \
-            feq(U[i][j], rho[i][j], E[q], W[q]);
+            f[i][j][q] = feq(U[i][j], rho[i][j], E[q], W[q]);
+            fp[i][j][q] = f[i][j][q];
         }
     }}
     #pragma acc enter data \
@@ -115,34 +118,32 @@ void finalize() {
 // TRT collision operator
 void collision(
     double f[C][C][Q],
+    double fp[C][C][Q],
     double U[C][C][D],
     double rho[C][C],
-    const int E[Q][D],
-    const double W[Q],
     double tau_s,
     double tau_a
 ) {
     #pragma acc parallel loop independent collapse(3) \
-    present(f, U, rho, E, W, Link) \
+    present(f, fp, U, rho, E, W, Link) \
     firstprivate(tau_s, tau_a)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
     for (int q = 0; q < Q; q ++) {
-        double f_s = 0.5*(f[i][j][q] + f[i][j][Link[q]]);
-        double f_a = 0.5*(f[i][j][q] - f[i][j][Link[q]]);
-        double feqq = feq(U[i][j], rho[i][j], E[     q ], W[     q ]);
-        double feql = feq(U[i][j], rho[i][j], E[Link[q]], W[Link[q]]);
+        int l = Link[q];
+        double f_s = 0.5*(f[i][j][q] + f[i][j][l]);
+        double f_a = 0.5*(f[i][j][q] - f[i][j][l]);
+        double feqq = feq(U[i][j], rho[i][j], E[q], W[q]);
+        double feql = feq(U[i][j], rho[i][j], E[l], W[l]);
         double feq_s = 0.5*(feqq + feql);
         double feq_a = 0.5*(feqq - feql);
-        f[i][j][q] += \
-        (feq_s - f_s)/tau_s + (feq_a - f_a)/tau_a;
+        fp[i][j][q] = f[i][j][q] + (feq_s - f_s)/tau_s + (feq_a - f_a)/tau_a;
     }}}
 }
 
 void streaming(
     double f[C][C][Q],
-    double fp[C][C][Q],
-    const int E[Q][D]
+    double fp[C][C][Q]
 ) {
     #pragma acc parallel loop independent collapse(3) \
     present(f, fp, E)
@@ -155,38 +156,41 @@ void streaming(
 
 void fbc(
     double f[C][C][Q],
+    double rho[C][C],
     double u_wall
 ) {
     #pragma acc parallel loop independent \
-    present(f)
-    for (int j = 1; j < C - 1; j ++) {
-        int I = 1;
-        f[I][j][1] = f[I][j][3];
-        f[I][j][5] = f[I][j][7];
-        f[I][j][8] = f[I][j][6];
-        I = C - 2;
-        f[I][j][3] = f[I][j][1];
-        f[I][j][7] = f[I][j][5];
-        f[I][j][6] = f[I][j][8];
+    present(f, rho, E, W) \
+    firstprivate(u_wall)
+    for (int i = 1; i < C - 1; i ++) {
+        const int j = C - 2; // top lid
+        f[i][j][7] = f[i+1][j+1][5] + E[7][0]*2*rho[i][j]*u_wall*W[7]/cs_ndim_sq;
+        f[i][j][4] = f[i  ][j+1][2];
+        f[i][j][8] = f[i-1][j+1][6] + E[8][0]*2*rho[i][j]*u_wall*W[8]/cs_ndim_sq;
     }
     #pragma acc parallel loop independent \
     present(f)
     for (int i = 1; i < C - 1; i ++) {
-        int J = 1;
-        f[i][J][2] = f[i][J][4];
-        f[i][J][6] = f[i][J][8];
-        f[i][J][5] = f[i][J][7];
+        const int j = 1; // bottom wall
+        f[i][j][6] = f[i+1][j-1][8];
+        f[i][j][2] = f[i  ][j-1][4];
+        f[i][j][5] = f[i-1][j-1][7];
     }
     #pragma acc parallel loop independent \
-    present(f) \
-    firstprivate(u_wall)
-    for (int i = 2; i < C - 2; i ++) {
-        int J = C - 2;
-        double r = f[i][J][0] + f[i][J][1] + f[i][J][3] + \
-        2*(f[i][J][2] + f[i][J][6] + f[i][J][5]);
-        f[i][J][4] = f[i][J][2];
-        f[i][J][7] = f[i][J][5] + 0.5*(f[i][J][1] - f[i][J][3]) - 0.5*r*u_wall;
-        f[i][J][8] = f[i][J][6] - 0.5*(f[i][J][1] - f[i][J][3]) + 0.5*r*u_wall;
+    present(f)
+    for (int j = 1; j < C - 1; j ++) {
+        const int i = C - 2; // right wall
+        f[i][j][6] = f[i+1][j-1][8];
+        f[i][j][3] = f[i+1][j  ][1];
+        f[i][j][7] = f[i+1][j+1][5];
+    }
+    #pragma acc parallel loop independent \
+    present(f)
+    for (int j = 1; j < C - 1; j ++) {
+        const int i = 1; // left wall
+        f[i][j][5] = f[i-1][j-1][7];
+        f[i][j][1] = f[i-1][j  ][3];
+        f[i][j][8] = f[i-1][j+1][6];
     }
 }
 
@@ -214,17 +218,17 @@ void meso_to_macro(
 }
 
 void main_loop() {
-    #pragma acc parallel loop independent collapse(3) \
-    present(fp, f)
-    for (int i = 0; i < C; i ++) {
-    for (int j = 0; j < C; j ++) {
-    for (int q = 0; q < Q; q ++) {
-        fp[i][j][q] = f[i][j][q];
-    }}}
+    // #pragma acc parallel loop independent collapse(3) \
+    // present(fp, f)
+    // for (int i = 0; i < C; i ++) {
+    // for (int j = 0; j < C; j ++) {
+    // for (int q = 0; q < Q; q ++) {
+    //     fp[i][j][q] = f[i][j][q];
+    // }}}
 
-    collision(fp, U, rho, E, W, tau_s_ndim, tau_a_ndim);
-    streaming(f, fp, E);
-    fbc(f, U_cav_ndim);
+    collision(f, fp, U, rho, tau_s_ndim, tau_a_ndim);
+    streaming(f, fp);
+    fbc(f, rho, U_cav_ndim);
     meso_to_macro(f, U, rho, E);
 }
 
@@ -233,6 +237,24 @@ void output(int n) {
     self(U, rho)
     std::string fname = "data/trt.csv." + std::to_string(n);
     FILE *file = fopen(fname.c_str(), "w");
+    fprintf(file, "x,y,z,u,v,w,rho\n");
+    for (int j = 1; j < C - 1; j ++) {
+    for (int i = 1; i < C - 1; i ++) {
+        fprintf(
+            file,
+            "%e,%e,%e,%lf,%lf,%lf,%lf\n",
+            (i-1+0.5)*dx_dim, (j-1+0.5)*dx_dim, 0.0,
+            U[i][j][0]*Cu_dim, U[i][j][1]*Cu_dim, 0.0,
+            rho[i][j]
+        );
+    }}
+    fclose(file);
+}
+
+void output() {
+    #pragma acc update \
+    self(U, rho)
+    FILE *file = fopen("data/trt.csv", "w");
     fprintf(file, "x,y,z,u,v,w,rho\n");
     for (int j = 1; j < C - 1; j ++) {
     for (int i = 1; i < C - 1; i ++) {
@@ -250,13 +272,14 @@ void output(int n) {
 int main(int argc, char **argv) {
     print_info();
     init();
-    for (int t = 1; t <= NT; t ++) {
+    for (int step = 1; step <= NT; step ++) {
         main_loop();
-        printf("\r%d/%d", t, NT);
+        printf("\r%d/%d", step, NT);
         fflush(stdout);
-        if (t % int(1./dt_dim) == 0) {
-            output(t / int(1./dt_dim));
+        if (step % output_interval_step == 0) {
+            output(step / output_interval_step);
         }
     }
+    // output();
     printf("\n");
 }

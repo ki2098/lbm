@@ -8,7 +8,7 @@ const int C = N+3;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 1000;
+const double Re_cav = 200;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
 const double U_cav_ndim = 0.1; // should be no more than 0.1
@@ -28,7 +28,7 @@ const double tau_dim  = nu_dim/cs_dim_sq + 0.5*dt_dim;
 const double tau_ndim = tau_dim/Ct_dim; // should not be significantly larger than 1
 const double omega = 1/tau_ndim; // better to be kept below 1.8
 const bool tau_check = (nu_dim == cs_ndim_sq*(tau_ndim - 0.5*dt_dim/Ct_dim)*Cl_dim*Cl_dim/Ct_dim);
-const double T_dim = 50;
+const double T_dim = 10;
 const int NT = T_dim/dt_dim;
 const double Re_g = U_cav_ndim*dx_ndim/nu_ndim; // should not be significantly larger than O(10)
 
@@ -212,7 +212,7 @@ void main_loop() {
 void output() {
     #pragma acc update \
     self(U, rho)
-    FILE *file = fopen("bgk.csv", "w");
+    FILE *file = fopen("data/bgk.csv", "w");
     fprintf(file, "x,y,z,u,v,w,rho\n");
     for (int j = 1; j < C - 1; j ++) {
     for (int i = 1; i < C - 1; i ++) {
