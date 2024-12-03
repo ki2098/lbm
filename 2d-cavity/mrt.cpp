@@ -8,12 +8,12 @@ using namespace std;
 
 const int Q = 9;
 const int D = 2;
-const int N = 128;
+const int N = 256;
 const int C = N+2;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 3200;
+const double Re_cav = 5000;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
 const double U_cav_ndim = 0.1; // should be no more than 0.1
@@ -33,7 +33,7 @@ const double tau_dim  = nu_dim/cs_dim_sq + 0.5*dt_dim;
 const double tau_ndim = tau_dim/Ct_dim; // should not be significantly larger than 1
 const double omega = 1/tau_ndim; // better to be kept below 1.8
 const bool tau_check = (nu_dim == cs_ndim_sq*(tau_ndim - 0.5*dt_dim/Ct_dim)*Cl_dim*Cl_dim/Ct_dim);
-const double T_dim = 100;
+const double T_dim = 150;
 const int NT = T_dim/dt_dim;
 const double Re_g = U_cav_ndim*dx_ndim/nu_ndim; // should not be significantly larger than O(10)
 
@@ -80,6 +80,12 @@ double M[Q][Q];
 double M_inv[Q][Q];
 double S_hat[Q] = {s0, s1, s2, s3, s4, s5, s6, s7, s8};
 
+void print_info() {
+    printf("========== MRT ==========\n");
+    printf("Re = %lf\n", Re_cav);
+    printf("tau = %lf\n", tau_ndim);
+}
+
 void init_matrices() {
     Eigen::Matrix<double, Q, Q> _M {
         { 1,  1,  1,  1,  1,  1,  1,  1,  1},
@@ -110,6 +116,8 @@ void init_matrices() {
 }
 
 void apply_matrix(double dst[C][C][Q], double Mat[Q][Q], double src[C][C][Q]) {
+    #pragma acc parallel loop independent collapse(3) \
+    present(dst, Mat, src)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
     for (int q = 0; q < Q; q ++) {
@@ -136,6 +144,8 @@ void get_meq(double meq[Q], double U[D], double rho) {
 }
 
 void collide(double m_new[C][C][Q], double m[C][C][Q], double S_hat[Q], double U[C][C][D], double rho[C][C]) {
+    #pragma acc parallel loop independent collapse(2) \
+    present(m_new, m, S_hat, U, rho)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
         double meq[9];
@@ -147,6 +157,8 @@ void collide(double m_new[C][C][Q], double m[C][C][Q], double S_hat[Q], double U
 }
 
 void stream(double f_new[C][C][Q], double f[C][C][Q]) {
+    #pragma acc parallel loop independent collapse(3) \
+    present(f, f_new, E)
     for (int i = 1; i < C - 1; i ++) {
     for (int j = 1; j < C - 1; j ++) {
     for (int q = 0; q < Q; q ++) {
@@ -155,27 +167,33 @@ void stream(double f_new[C][C][Q], double f[C][C][Q]) {
 }
 
 void apply_fbc(double f[C][C][Q], double rho[C][C], double u_wall) {
+    #pragma acc parallel loop independent \
+    present(f)
     for (int i = 1; i < C - 1; i ++) {
         const int j = 1; // bottom wall
         f[i][j][6] = f[i+1][j-1][8];
         f[i][j][2] = f[i  ][j-1][4];
         f[i][j][5] = f[i-1][j-1][7];
     }
-
+    #pragma acc parallel loop independent \
+    present(f)
     for (int j = 1; j < C - 1; j ++) {
         const int i = C - 2; // right wall
         f[i][j][6] = f[i+1][j-1][8];
         f[i][j][3] = f[i+1][j  ][1];
         f[i][j][7] = f[i+1][j+1][5];
     }
-
+    #pragma acc parallel loop independent \
+    present(f)
     for (int j = 1; j < C - 1; j ++) {
         const int i = 1; // left wall
         f[i][j][5] = f[i-1][j-1][7];
         f[i][j][1] = f[i-1][j  ][3];
         f[i][j][8] = f[i-1][j+1][6];
     }
-
+    #pragma acc parallel loop independent \
+    present(f, rho, E, W) \
+    firstprivate(u_wall)
     for (int i = 1; i < C - 1; i ++) {
         const int j = C - 2; // top lid
         f[i][j][7] = f[i+1][j+1][5] + E[7][0]*2*rho[i][j]*u_wall*W[7]/cs_ndim_sq;
@@ -185,6 +203,8 @@ void apply_fbc(double f[C][C][Q], double rho[C][C], double u_wall) {
 }
 
 void get_macro(double f[C][C][Q], double U[C][C][D], double rho[C][C]) {
+    #pragma acc parallel loop independent collapse(2) \
+    present(f, U, rho, E)
     for (int i = 0; i < C; i ++) {
     for (int j = 0; j < C; j ++) {
         rho[i][j] = 0;
@@ -218,11 +238,43 @@ void init() {
         get_meq(m[i][j], U[i][j], rho[i][j]);
     }}
     init_matrices();
+    
+
+    #pragma acc enter data \
+    copyin(E, W, f, f_new, m, m_new, M, M_inv, S_hat, U, rho)
+
     apply_matrix(f, M_inv, m);
     get_macro(f, U, rho);
+    print_info();
+}
+
+void finalize() {
+    #pragma acc exit data \
+    delete(E, W, f, f_new, m, m_new, M, M_inv, S_hat, U, rho)
+}
+
+void output(int n) {
+    #pragma acc update \
+    self(U, rho)
+    std::string fname = "data/mrt.csv." + std::to_string(n);
+    FILE *file = fopen(fname.c_str(), "w");
+    fprintf(file, "x,y,z,u,v,w,rho\n");
+    for (int j = 1; j < C - 1; j ++) {
+    for (int i = 1; i < C - 1; i ++) {
+        fprintf(
+            file,
+            "%e,%e,%e,%lf,%lf,%lf,%lf\n",
+            (i-1+0.5)*dx_dim, (j-1+0.5)*dx_dim, 0.0,
+            U[i][j][0]*Cu_dim, U[i][j][1]*Cu_dim, 0.0,
+            rho[i][j]
+        );
+    }}
+    fclose(file);
 }
 
 void output() {
+    #pragma acc update \
+    self(U, rho)
     FILE *file = fopen("data/mrt.csv", "w");
     fprintf(file, "x,y,z,u,v,w,rho\n");
     for (int j = 1; j < C - 1; j ++) {
@@ -230,7 +282,7 @@ void output() {
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
-            (i-1)*dx_dim, (j-1)*dx_dim, 0.0,
+            (i-1+0.5)*dx_dim, (j-1+0.5)*dx_dim, 0.0,
             U[i][j][0]*Cu_dim, U[i][j][1]*Cu_dim, 0.0,
             rho[i][j]
         );
@@ -245,10 +297,10 @@ int main(int argc, char **argv) {
         printf("\r%d/%d", step, NT);
         fflush(stdout);
         if (step % output_interval_step == 0) {
-            // output(step / output_interval_step);
+            output(step / output_interval_step);
         }
     }
-    output();
+    // output();
     printf("\n");
     return 0;
 }
