@@ -160,15 +160,6 @@ void fbc(
     double u_wall
 ) {
     #pragma acc parallel loop independent \
-    present(f, rho, E, W) \
-    firstprivate(u_wall)
-    for (int i = 1; i < C - 1; i ++) {
-        const int j = C - 2; // top lid
-        f[i][j][7] = f[i+1][j+1][5] + E[7][0]*2*rho[i][j]*u_wall*W[7]/cs_ndim_sq;
-        f[i][j][4] = f[i  ][j+1][2];
-        f[i][j][8] = f[i-1][j+1][6] + E[8][0]*2*rho[i][j]*u_wall*W[8]/cs_ndim_sq;
-    }
-    #pragma acc parallel loop independent \
     present(f)
     for (int i = 1; i < C - 1; i ++) {
         const int j = 1; // bottom wall
@@ -191,6 +182,15 @@ void fbc(
         f[i][j][5] = f[i-1][j-1][7];
         f[i][j][1] = f[i-1][j  ][3];
         f[i][j][8] = f[i-1][j+1][6];
+    }
+    #pragma acc parallel loop independent \
+    present(f, rho, E, W) \
+    firstprivate(u_wall)
+    for (int i = 1; i < C - 1; i ++) {
+        const int j = C - 2; // top lid
+        f[i][j][7] = f[i+1][j+1][5] + E[7][0]*2*rho[i][j]*u_wall*W[7]/cs_ndim_sq;
+        f[i][j][4] = f[i  ][j+1][2];
+        f[i][j][8] = f[i-1][j+1][6] + E[8][0]*2*rho[i][j]*u_wall*W[8]/cs_ndim_sq;
     }
 }
 
@@ -277,9 +277,9 @@ int main(int argc, char **argv) {
         printf("\r%d/%d", step, NT);
         fflush(stdout);
         if (step % output_interval_step == 0) {
-            output(step / output_interval_step);
+            // output(step / output_interval_step);
         }
     }
-    // output();
+    output();
     printf("\n");
 }
