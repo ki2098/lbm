@@ -24,8 +24,7 @@ const double Cnu_dim = Cl_dim*Cu_dim;
 const bool nu_check = (nu_ndim == nu_dim/Cnu_dim);
 const double cs_ndim_sq = 1./3;
 const double cs_dim_sq = cs_ndim_sq*Cu_dim*Cu_dim;
-const double tau_dim  = nu_dim/cs_dim_sq + 0.5*dt_dim;
-const double tau_ndim = tau_dim/Ct_dim; // should not be significantly larger than 1
+const double tau_ndim = nu_ndim/(cs_ndim_sq) + 0.5*dt_ndim; // should not be significantly larger than 1
 const double omega = 1/tau_ndim; // better to be kept below 1.8
 const bool tau_check = (nu_dim == cs_ndim_sq*(tau_ndim - 0.5*dt_dim/Ct_dim)*Cl_dim*Cl_dim/Ct_dim);
 const double T_dim = 10;

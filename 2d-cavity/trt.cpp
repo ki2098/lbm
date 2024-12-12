@@ -4,12 +4,12 @@
 
 const int Q = 9;
 const int D = 2;
-const int N = 256;
+const int N = 128;
 const int C = N+2;
 
 const double L_cav_dim = 1;
 const double U_cav_dim = 1;
-const double Re_cav = 5000;
+const double Re_cav = 200;
 const double nu_dim = L_cav_dim*U_cav_dim/Re_cav;
 const double dx_dim = L_cav_dim/N;
 const double U_cav_ndim = 0.1; // should be no more than 0.1
@@ -25,8 +25,7 @@ const double Cnu_dim = Cl_dim*Cu_dim;
 const bool nu_check = (nu_ndim == nu_dim/Cnu_dim);
 const double cs_ndim_sq = 1./3;
 const double cs_dim_sq = cs_ndim_sq*Cu_dim*Cu_dim;
-const double tau_s_ndim = nu_ndim/cs_ndim_sq + dt_ndim*0.5; // should not be significantly larger than 1
-const bool tau_s_check = (tau_s_ndim == (nu_dim/cs_dim_sq + 0.5*dt_dim)/Ct_dim);
+const double tau_s_ndim = nu_ndim/(cs_ndim_sq) + 0.5*dt_ndim; // should not be significantly larger than 1
 const double Lambda = 1./4.;
 const double tau_a_ndim = 0.5 + Lambda/(tau_s_ndim - 0.5);
 const double T_dim = 100;
