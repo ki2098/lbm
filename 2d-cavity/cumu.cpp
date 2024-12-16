@@ -61,7 +61,7 @@ const int N = 128;
 const int C = N+2;
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 50000;
+const double Re = 5000;
 const double nu_ = L_*U_/Re;
 const double dx_ = L_/N;
 const double dx = 1;
@@ -338,7 +338,6 @@ void apply_fbc(
         const int j = jmax - 2;
         const int lat = i*jmax + j;
         const int flist[]{0,3,6};
-        u_wall = (i > 2 && i < imax - 2)? u_wall : 0;
         for (int fid : flist) {
             const int lnk = 8 - fid;
             f[lat][fid] = fpost[lat][lnk] - Ve[lnk][0]*2*u_wall*Wgt[lnk]*csqi;
