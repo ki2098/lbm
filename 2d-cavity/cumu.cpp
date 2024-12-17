@@ -61,7 +61,7 @@ const int N = 128;
 const int C = N+2;
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 5000;
+const double Re = 3200;
 const double nu_ = L_*U_/Re;
 const double dx_ = L_/N;
 const double dx = 1;
@@ -77,7 +77,7 @@ const double csq = 1./3.;
 const double csqi = 3;
 const double tau = nu*csqi + 0.5;
 const double omega = 1/tau;
-const double T_ = 50000*dt_;
+const double T_ = 250;
 const int    NSTEP = T_/dt_;
 const double Re_lattice = U*dx/nu;
 
