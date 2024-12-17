@@ -77,7 +77,7 @@ const double csq = 1./3.;
 const double csqi = 3;
 const double tau = nu*csqi + 0.5;
 const double omega = 1/tau;
-const double T_ = 100;
+const double T_ = 50000*dt_;
 const int    NSTEP = T_/dt_;
 const double Re_lattice = U*dx/nu;
 
