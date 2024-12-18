@@ -59,10 +59,11 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 10000;
-const double Lx_ = 15*L_;
-const double Ly_ =  5*L_;
-const int Cells_per_length = 50;
+const double Re = 1e5;
+const double Lx_ = 20*L_;
+const double Ly_ =  10*L_;
+const int Cells_per_length = 20;
+const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
 const double dx_ = 1./Cells_per_length;
 const double dx = 1;
@@ -80,33 +81,42 @@ const double tau = nu*csqi + 0.5;
 const double omega = 1/tau;
 const double Re_lattice = U*dx/nu;
 
-const double T_ = 100;
+const double T_ = 300;
 const int N_step = T_/dt_;
 
 class Cumu {
 public:
-    double9_t *f, *fpost, *c, *cpost;
+    double9_t *f, *fpost, *fprev, *c, *cpost;
     int imax, jmax;
     double omega;
 
     Cumu(int imax, int jmax, double omega) : imax(imax), jmax(jmax), omega(omega) {
         f = new double9_t[imax*jmax];
         fpost = new double9_t[imax*jmax];
+        fprev = new double9_t[imax*jmax];
         c = new double9_t[imax*jmax];
         cpost = new double9_t[imax*jmax];
 
         #pragma acc enter data \
-        copyin(this[0:1], f[:imax*jmax], fpost[:imax*jmax], c[:imax*jmax], cpost[:imax*jmax])
+        copyin(this[0:1], f[:imax*jmax], fpost[:imax*jmax], fprev[:imax*jmax], c[:imax*jmax], cpost[:imax*jmax])
     }
 
     ~Cumu() {
         delete[] f;
         delete[] fpost;
+        delete[] fprev;
         delete[] c;
         delete[] cpost;
 
         #pragma acc exit data \
-        delete(f[:imax*jmax], fpost[:imax*jmax], c[:imax*jmax], cpost[:imax*jmax], this[0:1])
+        delete(f[:imax*jmax], fpost[:imax*jmax], fprev[:imax*jmax], c[:imax*jmax], cpost[:imax*jmax], this[0:1])
+    }
+
+    void print_info() {
+        printf("CUMULANT LBM\n");
+        printf("\tdomain size = (%d %d)\n", imax, jmax);
+        printf("\tghost cell = %d\n", Ghost_cell);
+        printf("\trelaxation rate = %lf\n", omega);
     }
 };
 
@@ -267,14 +277,25 @@ void advect(
     }}}
 }
 
+template<typename T>
+void cpy_array(T *dst, T *src, int cnt) {
+    #pragma acc parallel loop independent \
+    present(dst[:cnt], src[:cnt]) \
+    firstprivate(cnt)
+    for (int i = 0; i < cnt; i ++) {
+        dst[i] = src[i];
+    }
+}
+
 void apply_fbc(
     double9_t *f,
     double9_t *fpost,
+    double9_t *fprev,
     double u_inflow,
     int imax,
     int jmax
 ) {
-    /* bottom wall */
+    /* bottom slip */
     #pragma acc parallel loop independent \
     present(f[:imax*jmax], fpost[:imax*jmax]) \
     firstprivate(imax, jmax)
@@ -283,20 +304,198 @@ void apply_fbc(
         const int lat = i*jmax + j;
         const int flist[]{2,5,8};
         for (int fid : flist) {
-            f[lat][fid] = fpost[lat][8 - fid];
+            const int ref = fid - 2;
+            const int src = (i - Ve[ref][0])*jmax + j;
+            f[lat][fid] = fpost[src][ref];
         }
     }
-    /* top wall */
+    /* top slip */
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], fpost[:imax*jmax], Ve, Wgt) \
-    firstprivate(imax, jmax, u_wall)
+    present(f[:imax*jmax], fpost[:imax*jmax]) \
+    firstprivate(imax, jmax)
     for (int i = 1; i < imax - 1; i ++) {
         const int j = jmax - 2;
         const int lat = i*jmax + j;
         const int flist[]{0,3,6};
+        for (int fid : flist) {
+            const int ref = fid + 2;
+            const int src = (i - Ve[ref][0])*jmax + j;
+            f[lat][fid] = fpost[src][ref];
+        }
+    }
+    /* right outflow */
+    #pragma acc parallel loop independent \
+    present(f[:imax*jmax], fprev[:imax*jmax]) \
+    firstprivate(imax, jmax)
+    for (int j = 1; j < jmax - 1; j ++) {
+        const int i = imax - 2;
+        const int lat = i*jmax + j;
+        const int lin = (i - 1)*jmax + j;
+        const int flist[]{0,1,2};
+        const double cs = sqrt(csq);
+        for (int fid : flist) {
+            f[lat][fid] = cs*fprev[lin][fid] + (1 - cs)*fprev[lat][fid];
+        }
+    }
+    /* left inflow */
+    #pragma acc parallel loop independent \
+    present(f[:imax*jmax], fpost[:imax*jmax], Ve, Wgt) \
+    firstprivate(imax, jmax, u_inflow)
+    for (int j = 1; j < jmax - 1; j ++) {
+        const int i = 1;
+        const int lat = i*jmax + j;
+        const int flist[]{6,7,8};
+        for (int fid : flist) {
+            const int lnk = 8 - fid;
+            f[lat][fid] = fpost[lat][lnk] - Ve[lnk][0]*2*u_inflow*Wgt[lnk]*csqi;
+        }
+    }
+
+    const int ia = (5 - 0.5*L_)*Cells_per_length + 1;
+    const int ib = (5 + 0.5*L_)*Cells_per_length + 1;
+    const int ja = 0.5*(Ly_ - L_)*Cells_per_length + 1;
+    const int jb = 0.5*(Ly_ + L_)*Cells_per_length + 1;
+    /* square left face */
+    #pragma acc parallel loop independent \
+    present(f[:imax*jmax], fpost[:imax*jmax]) \
+    firstprivate(imax, jmax)
+    for (int j = ja; j < jb; j ++) {
+        const int lat = (ia - 1)*jmax + j;
+        const int flist[]{0,1,2};
+        for (int fid : flist) {
+            f[lat][fid] = fpost[lat][8 - fid];
+        }
+    }
+    /* square right face */
+    #pragma acc parallel loop independent \
+    present(f[:imax*jmax], fpost[:imax*jmax]) \
+    firstprivate(imax, jmax)
+    for (int j = ja; j < jb; j ++) {
+        const int lat = ib*jmax + j;
+        const int flist[]{6,7,8};
+        for (int fid : flist) {
+            f[lat][fid] = fpost[lat][8 - fid];
+        }
+    }
+    /* square bottom face */
+    #pragma acc parallel loop independent \
+    present(f[:imax*jmax], fpost[:imax*jmax]) \
+    firstprivate(imax, jmax)
+    for (int i = ia; i < ib; i ++) {
+        const int lat = i*jmax + (ja - 1);
+        const int flist[]{0,3,6};
+        for (int fid : flist) {
+            f[lat][fid] = fpost[lat][8 - fid];
+        }
+    }
+    /* square top face */
+    #pragma acc parallel loop independent \
+    present(f[:imax*jmax], fpost[:imax*jmax]) \
+    firstprivate(imax, jmax)
+    for (int i = ia; i < ib; i ++) {
+        const int lat = i*jmax + jb;
+        const int flist[]{2,5,8};
         for (int fid : flist) {
             f[lat][fid] = fpost[lat][8 - fid];
         }
     }
 }
 
+Cumu *init(int imax, int jmax, double tau) {
+    Cumu *cumu = new Cumu(imax, jmax, 1./tau);
+    cumu->print_info();
+
+    #pragma acc parallel loop independent \
+    present(cumu[0:1], cumu->c[0:imax*jmax]) \
+    firstprivate(imax, jmax)
+    for (int lat = 0; lat < imax*jmax; lat ++) {
+        cumu->c[lat] = get_equilibrium(1, U, 0);
+    }
+
+    compute_post_pdfs(cumu->c, cumu->f, cumu->imax, cumu->jmax);
+    cpy_array(cumu->fpost, cumu->f, cumu->imax*cumu->jmax);
+    cpy_array(cumu->fprev, cumu->f, cumu->imax*cumu->jmax);
+    apply_fbc(cumu->f, cumu->fpost, cumu->fprev, U, cumu->imax, cumu->jmax);
+    return cumu;
+}
+
+void finalize(Cumu *cumu) {
+    delete cumu;
+}
+
+void main_loop(Cumu *cumu) {
+    cpy_array(cumu->fprev, cumu->f, cumu->imax*cumu->jmax);
+    compute_cumulants(cumu->f, cumu->c, cumu->imax, cumu->jmax);
+    relax_cumulants(cumu->c, cumu->cpost, cumu->omega, cumu->imax, cumu->jmax);
+    compute_post_pdfs(cumu->cpost, cumu->fpost, cumu->imax, cumu->jmax);
+    advect(cumu->fpost, cumu->f, cumu->imax, cumu->jmax);
+    apply_fbc(cumu->f, cumu->fpost, cumu->fprev, U, cumu->imax, cumu->jmax);
+}
+
+void output(Cumu *cumu) {
+    #pragma acc update \
+    self(cumu->f[:cumu->imax*cumu->jmax])
+
+    FILE *file = fopen("data/cumu.csv", "w");
+    fprintf(file, "x,y,z,u,v,w,rho\n");
+    for (int j = 1; j < cumu->jmax - 1; j ++) {
+    for (int i = 1; i < cumu->imax - 1; i ++) {
+        const int lat = i*cumu->jmax + j;
+        double density, fluxx, fluxy;
+        get_statistics(cumu->f[lat], fluxx, fluxy, density);
+        double u = fluxx/density, v = fluxy/density;
+        fprintf(
+            file,
+            "%e,%e,%e,%lf,%lf,%lf,%lf\n",
+            (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
+            u*Cu_, v*Cu_, 0.0,
+            density
+        );
+    }}
+    fclose(file);
+}
+
+void output(Cumu *cumu, int n) {
+    #pragma acc update \
+    self(cumu->f[:cumu->imax*cumu->jmax])
+
+    FILE *file = fopen(("data/cumu.csv." + std::to_string(n)).c_str(), "w");
+    fprintf(file, "x,y,z,u,v,w,rho\n");
+    for (int j = 1; j < cumu->jmax - 1; j ++) {
+    for (int i = 1; i < cumu->imax - 1; i ++) {
+        const int lat = i*cumu->jmax + j;
+        double density, fluxx, fluxy;
+        get_statistics(cumu->f[lat], fluxx, fluxy, density);
+        double u = fluxx/density, v = fluxy/density;
+        fprintf(
+            file,
+            "%e,%e,%e,%lf,%lf,%lf,%lf\n",
+            (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
+            u*Cu_, v*Cu_, 0.0,
+            density
+        );
+    }}
+    fclose(file);
+}
+
+int main() {
+    Cumu *cumu = init(Lx_*Cells_per_length + 2*Ghost_cell, Ly_*Cells_per_length + 2*Ghost_cell, tau);
+    for (int step = 1; step <= N_step; step ++) {
+        main_loop(cumu);
+        printf("\r%d/%d", step, N_step);
+        fflush(stdout);
+    }
+    printf("\n");
+    output(cumu, 0);
+    for (int step = 1; step <= int(100/dt_); step ++) {
+        main_loop(cumu);
+        printf("\r%d/%d", step, int(100/dt_));
+        fflush(stdout);
+        if (step % int(1/dt_) == 0) {
+            output(cumu, step / int(1/dt_));
+        }
+    }
+    printf("\n");
+    // output(cumu);
+    finalize(cumu);
+}
