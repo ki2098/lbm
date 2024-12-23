@@ -60,9 +60,9 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 100;
+const double Re = 200;
 const double Lx_ = 20*L_;
-const double Ly_ =  10*L_;
+const double Ly_ = 5*L_;
 const int Cells_per_length = 20;
 const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
@@ -124,29 +124,29 @@ public:
 
 double9_t pdf_to_raw(const double9_t &f) {
     return double9_t{{
-          f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8],
-        - f[0] + f[2] - f[3] + f[5] - f[6] + f[8],
-          f[0] + f[2] + f[3] + f[5] + f[6] + f[8],
-        - f[0] - f[1] - f[2] + f[6] + f[7] + f[8],
-          f[0] - f[2] - f[6] + f[8],
-        - f[0] - f[2] + f[6] + f[8],
-          f[0] + f[1] + f[2] + f[6] + f[7] + f[8],
-        - f[0] + f[2] - f[6] + f[8], 
-          f[0] + f[2] + f[6] + f[8]
+        f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8],
+        -f[0] + f[2] - f[3] + f[5] - f[6] + f[8],
+        f[0] + f[2] + f[3] + f[5] + f[6] + f[8],
+        -f[0] - f[1] - f[2] + f[6] + f[7] + f[8],
+        f[0] - f[2] - f[6] + f[8],
+        -f[0] - f[2] + f[6] + f[8],
+        f[0] + f[1] + f[2] + f[6] + f[7] + f[8],
+        -f[0] + f[2] - f[6] + f[8],
+        f[0] + f[2] + f[6] + f[8]
     }};
 }
 
 double9_t raw_to_pdf(const double9_t &m) {
     return double9_t{{
-        0.25*m[4] - 0.25*m[5] - 0.25*m[7] + 0.25*m[8],
-       -0.5*m[3] + 0.5*m[5] + 0.5*m[6] - 0.5*m[8],
-       -0.25*m[4] - 0.25*m[5] + 0.25*m[7] + 0.25*m[8],
-       -0.5*m[1] + 0.5*m[2] + 0.5*m[7] - 0.5*m[8],
-       1.0*m[0] - 1.0*m[2] - 1.0*m[6] + 1.0*m[8],
-       0.5*m[1] + 0.5*m[2] - 0.5*m[7] - 0.5*m[8],
-       -0.25*m[4] + 0.25*m[5] - 0.25*m[7] + 0.25*m[8],
-       0.5*m[3] - 0.5*m[5] + 0.5*m[6] - 0.5*m[8],
-       0.25*m[4] + 0.25*m[5] + 0.25*m[7] + 0.25*m[8]
+        0.25*(m[4] - m[5] - m[7] + m[8]),
+        -0.5*(m[3] - m[5] - m[6] + m[8]),
+        -0.25*(m[4] + m[5] - m[7] - m[8]),
+        -0.5*(m[1] - m[2] - m[7] + m[8]),
+        1.0*(m[0] - m[2] - m[6] + m[8]),
+        0.5*(m[1] + m[2] - m[7] - m[8]),
+        -0.25*(m[4] - m[5] + m[7] - m[8]),
+        0.5*(m[3] - m[5] + m[6] - m[8]),
+        0.25*(m[4] + m[5] + m[7] + m[8])
     }};
 }
 
@@ -154,14 +154,14 @@ double9_t raw_to_center(const double9_t &m, const double u, const double v) {
     const double uu = u*u;
     const double vv = v*v;
     return double9_t{{
-        m[0], 
-        -m[0]*v + m[1], 
-        m[0]*vv - 2*m[1]*v + m[2], 
+        m[0],
+        -m[0]*v + m[1],
+        m[0]*vv - 2*m[1]*v + m[2],
         -m[0]*u + m[3],
-        -m[3]*v + m[4] - u*(-m[0]*v + m[1]),
-        m[3]*vv - 2*m[4]*v + m[5] - u*(m[0]*vv - 2*m[1]*v + m[2]),
-        m[0]*uu - 2*m[3]*u + m[6],
-       -m[6]*v + m[7] + uu*(-m[0]*v + m[1]) - 2*u*(-m[3]*v + m[4]),
+       -m[3]*v + m[4] + u*(m[0]*v - m[1]),
+       m[3]*vv - 2*m[4]*v + m[5] - u*(m[0]*vv - 2*m[1]*v + m[2]),
+       m[0]*uu - 2*m[3]*u + m[6],
+       -m[6]*v + m[7] + uu*(-m[0]*v + m[1]) + 2*u*(m[3]*v - m[4]),
        m[6]*vv - 2*m[7]*v + m[8] + uu*(m[0]*vv - 2*m[1]*v + m[2]) - 2*u*(m[3]*vv - 2*m[4]*v + m[5])
     }};
 }
@@ -356,16 +356,31 @@ void apply_fbc(
     }
     /* right outflow */
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], fprev[:imax*jmax]) \
-    firstprivate(imax, jmax)
+    present(f[:imax*jmax], fprev[:imax*jmax], Ve, Wgt) \
+    firstprivate(imax, jmax, u_inflow)
     for (int j = 1; j < jmax - 1; j ++) {
         const int i = imax - 2;
         const int lat = i*jmax + j;
-        const int lin = (i - 1)*jmax + j;
+        const int li1 = (i - 1)*jmax + j;
+        const int li2 = (i - 2)*jmax + j;
+        double u0, u1, u2, v0, v1, v2, rho0, rho1, rho2;
+        get_statistics(fprev[lat], u0, v0, rho0);
+        u0 /= rho0;
+        v0 /= rho0;
+        get_statistics(fprev[li1], u1, v1, rho1);
+        u1 /= rho1;
+        v1 /= rho1;
+        get_statistics(fprev[li2], u2, v2, rho2);
+        u2 /= rho2;
+        v2 /= rho2;
+        double2_t gradient{{
+            0.5*(3*u0 - 4*u1 + u2),
+            0.5*(3*v0 - 4*v1 + v2)
+        }};
         const int flist[]{0,1,2};
         const double cs = sqrt(csq);
         for (int fid : flist) {
-            f[lat][fid] = cs*fprev[lin][fid] + (1 - cs)*fprev[lat][fid];
+            f[lat][fid] = fprev[lat][fid] - 3*Wgt[fid]*u_inflow*rho0*(gradient[0]*Ve[fid][0] + gradient[1]*Ve[fid][1]);
         }
     }
     /* left inflow */
