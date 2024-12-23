@@ -60,10 +60,10 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 200;
+const double Re = 5.8e5;
 const double Lx_ = 20*L_;
 const double Ly_ = 5*L_;
-const int Cells_per_length = 20;
+const int Cells_per_length = 10;
 const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
 const double dx_ = 1./Cells_per_length;
@@ -354,7 +354,7 @@ void apply_fbc(
             f[lat][fid] = fpost[src][ref];
         }
     }
-    /* right outflow */
+    /* right convective outflow */
     #pragma acc parallel loop independent \
     present(f[:imax*jmax], fprev[:imax*jmax], Ve, Wgt) \
     firstprivate(imax, jmax, u_inflow)
