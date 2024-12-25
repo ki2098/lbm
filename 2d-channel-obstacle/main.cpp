@@ -62,8 +62,8 @@ const double L_ = 1;
 const double U_ = 1;
 const double Re = 5.8e5;
 const double Lx_ = 20*L_;
-const double Ly_ = 5*L_;
-const int Cells_per_length = 10;
+const double Ly_ = 10*L_;
+const int Cells_per_length = 20;
 const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
 const double dx_ = 1./Cells_per_length;
@@ -455,6 +455,39 @@ void apply_fbc(
         f[(ib  )*jmax + (ja-1)][6] = fpost[(ib  )*jmax + (ja-1)][2];
         f[(ia  )*jmax + (jb  )][8] = fpost[(ia  )*jmax + (jb  )][0];
     }
+}
+
+double get_drag(
+    double9_t *f,
+    int imax,
+    int jmax
+) {
+    const int ia = (5 - 0.5*L_)*Cells_per_length + 1;
+    const int ib = (5 + 0.5*L_)*Cells_per_length + 1;
+    const int ja = 0.5*(Ly_ - L_)*Cells_per_length + 1;
+    const int jb = 0.5*(Ly_ + L_)*Cells_per_length + 1;
+    
+    double pressure_l = 0;
+    for (int j = ja; j < jb; j ++) {
+        const int lat = (ia - 1)*jmax + j;
+        double ru, rv, r;
+        get_statistics(f[lat], ru, rv, r);
+        pressure_l += (r - 1.0);
+    }
+    pressure_l *= dx*csq;
+
+    double pressure_r = 0;
+    for (int j = ja; j < jb; j ++) {
+        const int lat = ib*jmax + j;
+        const int lat = (ia - 1)*jmax + j;
+        double ru, rv, r;
+        get_statistics(f[lat], ru, rv, r);
+        pressure_r += (r - 1.0);
+    }
+    pressure_l *= dx*csq;
+
+    return pressure_r - pressure_l;
+
 }
 
 Cumu *init(int imax, int jmax, double tau) {

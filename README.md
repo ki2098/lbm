@@ -1,0 +1,1 @@
+My implement of the Lattice Boltzmann Method, aimed to work with very high Reynolds numbers, with validation and comparison with [lbmpy](https://i10git.cs.fau.de/pycodegen/lbmpy)
