@@ -3,6 +3,8 @@
 #include <cmath>
 #include <string>
 #include <chrono>
+#include <iostream>
+#include <fstream>
 
 template<typename T, int N>
 struct vector_t {
@@ -14,6 +16,17 @@ struct vector_t {
     
     const T &operator[](int i) const {
         return m[i];
+    }
+    std::string to_str() {
+        std::string str = "(";
+        if (N == 0) {
+            return str + ")";
+        }
+        str += std::to_string(m[0]);
+        for (int i = 1; i < N; i ++) {
+            str += ", " + std::to_string(m[i]);
+        }
+        return str + ")";
     }
 };
 
@@ -60,8 +73,8 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 5.8e5;
-const double Lx_ = 20*L_;
+const double Re = 100;
+const double Lx_ = 26*L_;
 const double Ly_ = 10*L_;
 const int Cells_per_length = 20;
 const int Ghost_cell = 1;
@@ -69,7 +82,7 @@ const double nu_ = L_*U_/Re;
 const double dx_ = 1./Cells_per_length;
 const double dx = 1;
 const double Cx_ = dx_/dx;
-const double U = 0.02;
+const double U = 0.05;
 const double Cu_ = U_/U;
 const double Ct_ = Cx_/Cu_;
 const double dt = 1;
@@ -82,9 +95,15 @@ const double tau = nu*csqi + 0.5;
 const double omega = 1/tau;
 const double Re_lattice = U*dx/nu;
 const double CFL = U_*dt_/dx_;
+const double Cpressure_ = 1.*Cu_*Cu_;
 
-const double T_ = 300;
-const int N_step = T_/dt_;
+const double T_pre = 500;
+const int N_pre = T_pre/dt_;
+const double T_post = 100;
+const int N_post = T_post/dt_;
+
+const double center_x_ = 6*L_;
+const double center_y_ = Ly_/2;
 
 class Cumu {
 public:
@@ -122,6 +141,30 @@ public:
     }
 };
 
+void get_statistics(
+    const double9_t &f,
+    double &phix,
+    double &phiy,
+    double &rho
+) {
+    phix = 0;
+    phiy = 0;
+    rho = 0;
+    for (int fid = 0; fid < 9; fid ++) {
+        phix += Ve[fid][0]*f[fid];
+        phiy += Ve[fid][1]*f[fid];
+        rho += f[fid];
+    }
+}
+
+
+double9_t get_equilibrium_cumulant(double rho, double u, double v) {
+    return double9_t{{
+        /* 00       01          02          10     11 12      20      21 22 */
+        rho, rho*v, csq*rho, rho*u, 0, 0, csq*rho, 0, 0
+    }};
+}
+
 double9_t pdf_to_raw(const double9_t &f) {
     return double9_t{{
         f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8],
@@ -150,23 +193,23 @@ double9_t raw_to_pdf(const double9_t &m) {
     }};
 }
 
-double9_t raw_to_center(const double9_t &m, const double u, const double v) {
+double9_t raw_to_central(const double9_t &m, const double u, const double v) {
     const double uu = u*u;
     const double vv = v*v;
     return double9_t{{
         m[0],
-        -m[0]*v + m[1],
+       -m[0]*v + m[1],
         m[0]*vv - 2*m[1]*v + m[2],
-        -m[0]*u + m[3],
+       -m[0]*u + m[3],
        -m[3]*v + m[4] + u*(m[0]*v - m[1]),
-       m[3]*vv - 2*m[4]*v + m[5] - u*(m[0]*vv - 2*m[1]*v + m[2]),
-       m[0]*uu - 2*m[3]*u + m[6],
+        m[3]*vv - 2*m[4]*v + m[5] - u*(m[0]*vv - 2*m[1]*v + m[2]),
+        m[0]*uu - 2*m[3]*u + m[6],
        -m[6]*v + m[7] + uu*(-m[0]*v + m[1]) + 2*u*(m[3]*v - m[4]),
-       m[6]*vv - 2*m[7]*v + m[8] + uu*(m[0]*vv - 2*m[1]*v + m[2]) - 2*u*(m[3]*vv - 2*m[4]*v + m[5])
+        m[6]*vv - 2*m[7]*v + m[8] + uu*(m[0]*vv - 2*m[1]*v + m[2]) - 2*u*(m[3]*vv - 2*m[4]*v + m[5])
     }};
 }
 
-double9_t center_to_raw(const double9_t &k, const double u, const double v) {
+double9_t central_to_raw(const double9_t &k, const double u, const double v) {
     const double uu = u*u;
     const double vv = v*v;
     return double9_t{{
@@ -182,23 +225,53 @@ double9_t center_to_raw(const double9_t &k, const double u, const double v) {
     }};
 }
 
-void get_statistics(
-    const double9_t &f,
-    double &fluxx,
-    double &fluxy,
-    double &density
-) {
-    fluxx = 0;
-    fluxy = 0;
-    density = 0;
-    for (int fid = 0; fid < 9; fid ++) {
-        fluxx += Ve[fid][0]*f[fid];
-        fluxy += Ve[fid][1]*f[fid];
-        density += f[fid];
-    }
+double9_t central_to_cumulant(const double9_t &k, const double u, const double v) {
+    double9_t c;
+    const double rho = k[0];
+    c[0] = rho;
+    c[1] = v*rho;
+    c[3] = u*rho;
+    c[2] = k[2];
+    c[4] = k[4];
+    c[6] = k[6];
+    c[5] = k[5];
+    c[7] = k[7];
+    c[8] = k[8] - (2*k[4]*k[4] + k[6]*k[2])/rho;
+    return c;
 }
 
-void compute_cumulants(
+
+double9_t cumulant_to_central(const double9_t &c) {
+    double9_t k;
+    const double rho = c[0];
+    k[0] = rho;
+    k[1] = 0;
+    k[3] = 0;
+    k[2] = c[2];
+    k[4] = c[4];
+    k[6] = c[6];
+    k[5] = c[5];
+    k[7] = c[7];
+    k[8] = c[8] + (2*k[4]*k[4] + k[6]*k[2])/rho;
+    return k;
+}
+
+double9_t pdf_to_cumulant(const double9_t &f) {
+    double phix, phiy, rho;
+    get_statistics(f, phix, phiy, rho);
+    const double u = phix/rho;
+    const double v = phiy/rho;
+    return central_to_cumulant(raw_to_central(pdf_to_raw(f), u, v), u, v);
+}
+
+double9_t cumulant_to_pdf(const double9_t &c) {
+    double rho = c[0];
+    double v = c[1]/rho;
+    double u = c[3]/rho;
+    return raw_to_pdf(central_to_raw(cumulant_to_central(c), u, v));
+}
+
+void compute_cumulant(
     const double9_t *f,
     double9_t *c,
     int imax, 
@@ -208,34 +281,26 @@ void compute_cumulants(
     present(f[:imax*jmax], c[:imax*jmax], Ve, Cmk) \
     firstprivate(imax, jmax)
     for (int lat = 0; lat < imax*jmax; lat ++) {
-        const double9_t &fc = f[lat];
-        double fluxx, fluxy, density;
-        get_statistics(fc, fluxx, fluxy, density);
-        const double u = fluxx/density;
-        const double v = fluxy/density;
-        double9_t mc = pdf_to_raw(fc);
-        double9_t kc = raw_to_center(mc, u, v);
-        double9_t &cc = c[lat];
-        cc[0] = density;
-        cc[1] = fluxy;
-        cc[3] = fluxx;
-        cc[2] = kc[2];
-        cc[4] = kc[4];
-        cc[6] = kc[6];
-        cc[5] = kc[5];
-        cc[7] = kc[7];
-        cc[8] = kc[8] - (2*kc[4]*kc[4] + kc[6]*kc[2])/density;
+        c[lat] = pdf_to_cumulant(f[lat]);
     }
 }
 
-double9_t get_equilibrium(double density, double u, double v) {
-    return double9_t{{
-        /* 00       01          02          10     11 12      20      21 22 */
-        density, density*v, csq*density, density*u, 0, 0, csq*density, 0, 0
-    }};
+double9_t relax_cumulant(const double9_t &c, const double omega) {
+    double9_t cpost;
+    const double rho = c[0];
+    cpost[0] = c[0];
+    cpost[1] = c[1];
+    cpost[3] = c[3];
+    cpost[2] = 0.5*(1 - omega)*(c[2] - c[6]) + rho*csq;
+    cpost[4] = (1 - omega)*c[4];
+    cpost[6] = 0.5*(1 - omega)*(c[6] - c[2]) + rho*csq;
+    cpost[5] = 0;
+    cpost[7] = 0;
+    cpost[8] = 0;
+    return cpost;
 }
 
-void relax_cumulants(
+void collide(
     const double9_t *c,
     double9_t *cpost,
     double omega,
@@ -246,21 +311,11 @@ void relax_cumulants(
     present(c[:imax*jmax], cpost[:imax*jmax]) \
     firstprivate(omega, imax, jmax)
     for (int lat = 0; lat < imax*jmax; lat ++) {
-        const double9_t &cc = c[lat];
-        double9_t &ccpost = cpost[lat];
-        ccpost[0] = cc[0];
-        ccpost[1] = cc[1];
-        ccpost[3] = cc[3];
-        ccpost[2] = 0.5*(1 - omega)*(cc[2] - cc[6]) + cc[0]*csq;
-        ccpost[4] = (1 - omega)*cc[4];
-        ccpost[6] = 0.5*(1 - omega)*(cc[6] - cc[2]) + cc[0]*csq;
-        ccpost[5] = 0;
-        ccpost[7] = 0;
-        ccpost[8] = 0;
+        cpost[lat] = relax_cumulant(c[lat], omega);
     }
 }
 
-void compute_post_pdfs(
+void compute_post_collision_pdfs(
     const double9_t *cpost,
     double9_t *fpost,
     int imax,
@@ -270,23 +325,7 @@ void compute_post_pdfs(
     present(cpost[:imax*jmax], fpost[:imax*jmax])\
     firstprivate(imax, jmax)
     for (int lat = 0; lat < imax*jmax; lat ++) {
-        const double9_t &cc = cpost[lat];
-        double density = cc[0];
-        double v = cc[1]/density;
-        double u = cc[3]/density;
-        double9_t kc{{}};
-        kc[0] = density;
-        kc[1] = 0;
-        kc[3] = 0;
-        kc[2] = cc[2];
-        kc[4] = cc[4];
-        kc[6] = cc[6];
-        kc[5] = cc[5];
-        kc[7] = cc[7];
-        kc[8] = cc[8] + (2*kc[4]*kc[4] + kc[6]*kc[2])/density;
-
-        double9_t mc = center_to_raw(kc, u, v);
-        fpost[lat] = raw_to_pdf(mc);
+        fpost[lat] = cumulant_to_pdf(cpost[lat]);
     }
 }
 
@@ -363,24 +402,18 @@ void apply_fbc(
         const int lat = i*jmax + j;
         const int li1 = (i - 1)*jmax + j;
         const int li2 = (i - 2)*jmax + j;
-        double u0, u1, u2, v0, v1, v2, rho0, rho1, rho2;
-        get_statistics(fprev[lat], u0, v0, rho0);
-        u0 /= rho0;
-        v0 /= rho0;
-        get_statistics(fprev[li1], u1, v1, rho1);
-        u1 /= rho1;
-        v1 /= rho1;
-        get_statistics(fprev[li2], u2, v2, rho2);
-        u2 /= rho2;
-        v2 /= rho2;
+        double ru0, ru1, ru2, rv0, rv1, rv2, dummy;
+        get_statistics(fprev[lat], ru0, rv0, dummy);
+        get_statistics(fprev[li1], ru1, rv1, dummy);
+        get_statistics(fprev[li2], ru2, rv2, dummy);
         double2_t gradient{{
-            0.5*(3*u0 - 4*u1 + u2),
-            0.5*(3*v0 - 4*v1 + v2)
+            (3*ru0 - 4*ru1 + ru2),
+            (3*rv0 - 4*rv1 + rv2)
         }};
         const int flist[]{0,1,2};
         const double cs = sqrt(csq);
         for (int fid : flist) {
-            f[lat][fid] = fprev[lat][fid] - 3*Wgt[fid]*u_inflow*rho0*(gradient[0]*Ve[fid][0] + gradient[1]*Ve[fid][1]);
+            f[lat][fid] = fprev[lat][fid] - 3*Wgt[fid]*0.5*u_inflow*(gradient[0]*Ve[fid][0] + gradient[1]*Ve[fid][1]);
         }
     }
     /* left inflow */
@@ -388,19 +421,22 @@ void apply_fbc(
     present(f[:imax*jmax], fpost[:imax*jmax], Ve, Wgt) \
     firstprivate(imax, jmax, u_inflow)
     for (int j = 1; j < jmax - 1; j ++) {
-        const int i = 1;
+        // const int i = 1;
+        // const int lat = i*jmax + j;
+        // const int flist[]{6,7,8};
+        // for (int fid : flist) {
+        //     const int lnk = 8 - fid;
+        //     f[lat][fid] = fpost[lat][lnk] - Ve[lnk][0]*2*u_inflow*Wgt[lnk]*csqi;
+        // }
+        const int i = 0;
         const int lat = i*jmax + j;
-        const int flist[]{6,7,8};
-        for (int fid : flist) {
-            const int lnk = 8 - fid;
-            f[lat][fid] = fpost[lat][lnk] - Ve[lnk][0]*2*u_inflow*Wgt[lnk]*csqi;
-        }
+        f[lat] = cumulant_to_pdf(get_equilibrium_cumulant(1., u_inflow, 0.));
     }
 
-    const int ia = (5 - 0.5*L_)*Cells_per_length + 1;
-    const int ib = (5 + 0.5*L_)*Cells_per_length + 1;
-    const int ja = 0.5*(Ly_ - L_)*Cells_per_length + 1;
-    const int jb = 0.5*(Ly_ + L_)*Cells_per_length + 1;
+    const int ia = (center_x_ - 0.5*L_)*Cells_per_length + 1;
+    const int ib = (center_x_ + 0.5*L_)*Cells_per_length + 1;
+    const int ja = (center_y_ - 0.5*L_)*Cells_per_length + 1;
+    const int jb = (center_y_ + 0.5*L_)*Cells_per_length + 1;
     /* square left face */
     #pragma acc parallel loop independent \
     present(f[:imax*jmax], fpost[:imax*jmax]) \
@@ -453,7 +489,7 @@ void apply_fbc(
         f[(ia-1)*jmax + (ja-1)][0] = fpost[(ia-1)*jmax + (ja-1)][8];
         f[(ia-1)*jmax + (jb  )][2] = fpost[(ia-1)*jmax + (jb  )][6];
         f[(ib  )*jmax + (ja-1)][6] = fpost[(ib  )*jmax + (ja-1)][2];
-        f[(ia  )*jmax + (jb  )][8] = fpost[(ia  )*jmax + (jb  )][0];
+        f[(ib  )*jmax + (jb  )][8] = fpost[(ib  )*jmax + (jb  )][0];
     }
 }
 
@@ -462,12 +498,16 @@ double get_drag(
     int imax,
     int jmax
 ) {
-    const int ia = (5 - 0.5*L_)*Cells_per_length + 1;
-    const int ib = (5 + 0.5*L_)*Cells_per_length + 1;
-    const int ja = 0.5*(Ly_ - L_)*Cells_per_length + 1;
-    const int jb = 0.5*(Ly_ + L_)*Cells_per_length + 1;
-    
+    const int ia = (center_x_ - 0.5*L_)*Cells_per_length + 1;
+    const int ib = (center_x_ + 0.5*L_)*Cells_per_length + 1;
+    const int ja = (center_y_ - 0.5*L_)*Cells_per_length + 1;
+    const int jb = (center_y_ + 0.5*L_)*Cells_per_length + 1;
+
     double pressure_l = 0;
+    #pragma acc parallel loop independent \
+    reduction(+:pressure_l) \
+    present(f[:imax*jmax]) \
+    firstprivate(imax, jmax)
     for (int j = ja; j < jb; j ++) {
         const int lat = (ia - 1)*jmax + j;
         double ru, rv, r;
@@ -477,16 +517,19 @@ double get_drag(
     pressure_l *= dx*csq;
 
     double pressure_r = 0;
+    #pragma acc parallel loop independent \
+    reduction(+:pressure_r) \
+    present(f[:imax*jmax]) \
+    firstprivate(imax, jmax)
     for (int j = ja; j < jb; j ++) {
         const int lat = ib*jmax + j;
-        const int lat = (ia - 1)*jmax + j;
         double ru, rv, r;
         get_statistics(f[lat], ru, rv, r);
         pressure_r += (r - 1.0);
     }
-    pressure_l *= dx*csq;
+    pressure_r *= dx*csq;
 
-    return pressure_r - pressure_l;
+    return (pressure_l - pressure_r)*Cpressure_;
 
 }
 
@@ -494,17 +537,12 @@ Cumu *init(int imax, int jmax, double tau) {
     Cumu *cumu = new Cumu(imax, jmax, 1./tau);
     cumu->print_info();
 
-    #pragma acc parallel loop independent \
-    present(cumu[0:1], cumu->c[0:imax*jmax]) \
+     #pragma acc parallel loop independent \
+    present(cumu[0:1], cumu->f[0:imax*jmax]) \
     firstprivate(imax, jmax)
     for (int lat = 0; lat < imax*jmax; lat ++) {
-        cumu->c[lat] = get_equilibrium(1, 0, 0);
+        cumu->f[lat] = cumulant_to_pdf(get_equilibrium_cumulant(1, U, 0));
     }
-
-    compute_post_pdfs(cumu->c, cumu->f, cumu->imax, cumu->jmax);
-    cpy_array(cumu->fpost, cumu->f, cumu->imax*cumu->jmax);
-    cpy_array(cumu->fprev, cumu->f, cumu->imax*cumu->jmax);
-    apply_fbc(cumu->f, cumu->fpost, cumu->fprev, U, cumu->imax, cumu->jmax);
     return cumu;
 }
 
@@ -514,9 +552,9 @@ void finalize(Cumu *cumu) {
 
 void main_loop(Cumu *cumu) {
     cpy_array(cumu->fprev, cumu->f, cumu->imax*cumu->jmax);
-    compute_cumulants(cumu->f, cumu->c, cumu->imax, cumu->jmax);
-    relax_cumulants(cumu->c, cumu->cpost, cumu->omega, cumu->imax, cumu->jmax);
-    compute_post_pdfs(cumu->cpost, cumu->fpost, cumu->imax, cumu->jmax);
+    compute_cumulant(cumu->f, cumu->c, cumu->imax, cumu->jmax);
+    collide(cumu->c, cumu->cpost, cumu->omega, cumu->imax, cumu->jmax);
+    compute_post_collision_pdfs(cumu->cpost, cumu->fpost, cumu->imax, cumu->jmax);
     advect(cumu->fpost, cumu->f, cumu->imax, cumu->jmax);
     apply_fbc(cumu->f, cumu->fpost, cumu->fprev, U, cumu->imax, cumu->jmax);
 }
@@ -530,15 +568,15 @@ void output(Cumu *cumu) {
     for (int j = 1; j < cumu->jmax - 1; j ++) {
     for (int i = 1; i < cumu->imax - 1; i ++) {
         const int lat = i*cumu->jmax + j;
-        double density, fluxx, fluxy;
-        get_statistics(cumu->f[lat], fluxx, fluxy, density);
-        double u = fluxx/density, v = fluxy/density;
+        double rho, phix, phiy;
+        get_statistics(cumu->f[lat], phix, phiy, rho);
+        double u = phix/rho, v = phiy/rho;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
             (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
             u*Cu_, v*Cu_, 0.0,
-            density
+            rho
         );
     }}
     fclose(file);
@@ -553,40 +591,72 @@ void output(Cumu *cumu, int n) {
     for (int j = 1; j < cumu->jmax - 1; j ++) {
     for (int i = 1; i < cumu->imax - 1; i ++) {
         const int lat = i*cumu->jmax + j;
-        double density, fluxx, fluxy;
-        get_statistics(cumu->f[lat], fluxx, fluxy, density);
-        double u = fluxx/density, v = fluxy/density;
+        double rho, phix, phiy;
+        get_statistics(cumu->f[lat], phix, phiy, rho);
+        double u = phix/rho, v = phiy/rho;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
             (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
             u*Cu_, v*Cu_, 0.0,
-            density
+            rho
         );
     }}
     fclose(file);
 }
 
-int main() {
+class Probe {
+public:
+    int i, j, imax, jmax;
+    std::ofstream ofs;
+
+    Probe(int i, int j, int imax, int jmax) : i(i), j(j), imax(imax), jmax(jmax) {
+        ofs.open("data/probe.csv");
+        ofs << "t,value\n";
+    }
+
+    void write(const double9_t *f, double t) {
+        int lat = i*jmax + j;
+        #pragma acc update \
+        self(f[lat:1])
+
+        double rv, ru, r;
+        get_statistics(f[lat], ru, rv, r);
+        ofs << t << "," << ru/r << std::endl;
+    }
+
+    ~Probe() {
+        ofs.close();
+    }
+
+};
+
+int main() {  
     Cumu *cumu = init(Lx_*Cells_per_length + 2*Ghost_cell, Ly_*Cells_per_length + 2*Ghost_cell, tau);
+    Probe probe((center_x_ + L_)*Cells_per_length + 1, (center_y_ + 0.5*L_)*Cells_per_length + 1, Lx_*Cells_per_length + 2*Ghost_cell, Ly_*Cells_per_length + 2*Ghost_cell);
     auto begin = std::chrono::high_resolution_clock::now();
-    for (int step = 1; step <= N_step; step ++) {
+    for (int step = 1; step <= N_pre; step ++) {
         main_loop(cumu);
-        printf("\r%d/%d", step, N_step);
+        printf("\r%d/%d", step, N_pre);
         fflush(stdout);
     }
     auto end = std::chrono::high_resolution_clock::now();
     auto elapse = std::chrono::duration_cast<std::chrono::seconds>(end - begin);
     printf("\n%d\n", elapse);
     output(cumu, 0);
-    for (int step = 1; step <= int(100/dt_); step ++) {
+    std::ofstream drag_history("data/drag_history.csv");
+    drag_history << "t,drag\n";
+    for (int step = 1; step <= N_post; step ++) {
         main_loop(cumu);
-        printf("\r%d/%d", step, int(100/dt_));
+        drag_history << (step + N_pre)*dt_ << "," << get_drag(cumu->f, cumu->imax, cumu->jmax) << std::endl;
+        printf("\r%d/%d", step, N_post);
         fflush(stdout);
         if (step % int(1/dt_) == 0) {
             output(cumu, step / int(1/dt_));
         }
+        probe.write(cumu->f, (step + N_pre)*dt_);
     }
+    drag_history.close();
     printf("\n");
     finalize(cumu);
 }

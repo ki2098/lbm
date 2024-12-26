@@ -135,7 +135,7 @@ void get_statistics(
  * c21 = k21
  * c22 = k22 - 2(k11^2 + k20 k02)/rho
  */
-void compute_cumulants(
+void compute_cumulant(
     const double9_t *f,
     double9_t *c,
     int imax, 
@@ -179,7 +179,7 @@ void compute_cumulants(
     }
 }
 
-double9_t get_equilibrium(double density, double u, double v) {
+double9_t get_equilibrium_cumulant(double density, double u, double v) {
     return double9_t{{
         /* 00       01          02          10     11 12      20      21 22 */
         density, density*v, csq*density, density*u, 0, 0, csq*density, 0, 0
@@ -222,7 +222,7 @@ void relax_cumulants(
     }
 }
 
-void compute_post_pdfs(
+void compute_post_collision_pdfs(
     const double9_t *cpost,
     double9_t *fpost,
     int imax,
@@ -362,10 +362,10 @@ Cumu *init(int imax, int jmax, double tau) {
     present(cumu[0:1], cumu->c[0:imax*jmax]) \
     firstprivate(imax, jmax)
     for (int lat = 0; lat < imax*jmax; lat ++) {
-        cumu->c[lat] = get_equilibrium(1, 0, 0);
+        cumu->c[lat] = get_equilibrium_cumulant(1, 0, 0);
     }
 
-    compute_post_pdfs(cumu->c, cumu->f, cumu->imax, cumu->jmax);
+    compute_post_collision_pdfs(cumu->c, cumu->f, cumu->imax, cumu->jmax);
     cpy_array(cumu->fpost, cumu->f, cumu->imax*cumu->jmax);
     apply_fbc(cumu->f, cumu->fpost, U, cumu->imax, cumu->jmax);
     return cumu;
@@ -376,9 +376,9 @@ void finalize(Cumu *cumu) {
 }
 
 void main_loop(Cumu *cumu) {
-    compute_cumulants(cumu->f, cumu->c, cumu->imax, cumu->jmax);
+    compute_cumulant(cumu->f, cumu->c, cumu->imax, cumu->jmax);
     relax_cumulants(cumu->c, cumu->cpost, 1./cumu->tau, cumu->imax, cumu->jmax);
-    compute_post_pdfs(cumu->cpost, cumu->fpost, cumu->imax, cumu->jmax);
+    compute_post_collision_pdfs(cumu->cpost, cumu->fpost, cumu->imax, cumu->jmax);
     advect(cumu->fpost, cumu->f, cumu->imax, cumu->jmax);
     apply_fbc(cumu->f, cumu->fpost, U, cumu->imax, cumu->jmax);
 }
