@@ -7,22 +7,18 @@ csv = pd.read_csv('data/probe.csv')
 value = np.asarray(csv['value'])
 minimum = min(value)
 maximum = max(value)
-center = 0.5*(minimum + maximum)
-value = value - center
-amp = maximum - minimum
-value = value / amp
+amp = (maximum - minimum)/2
+value = (value - (maximum + minimum)/2)/amp
+fft = 2*np.fft.fft(value)/value.size
+power = (np.abs(fft))**2
+dt = 0.0025
+freq = np.fft.fftfreq(value.size, dt)
+# idx = np.argsort(freq)
 
-print(minimum, maximum)
-
-fft = np.fft.fft(value)
-n = len(fft)
-fft = abs(fft[0:n//2])
-
-fft_sorted = np.sort(fft)
-print('k\ts')
-for i in range(-1,-11,-1):
-    k = np.where(fft == fft_sorted[i])[0][0]
-    s = k/100
-    print('%s\t%s'%(k,s))
+fig, ax = plt.subplots(2, 1)
+ax[0].plot(csv['t'], value)
+ax[1].plot(freq[:500], power[:500])
+ax[1].grid()
+plt.show()
 
 

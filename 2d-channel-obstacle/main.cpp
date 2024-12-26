@@ -73,9 +73,9 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 100;
-const double Lx_ = 26*L_;
-const double Ly_ = 10*L_;
+const double Re = 500;
+const double Lx_ = 30*L_;
+const double Ly_ = 20*L_;
 const int Cells_per_length = 20;
 const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
@@ -99,7 +99,7 @@ const double Cpressure_ = 1.*Cu_*Cu_;
 
 const double T_pre = 500;
 const int N_pre = T_pre/dt_;
-const double T_post = 100;
+const double T_post = 1000;
 const int N_post = T_post/dt_;
 
 const double center_x_ = 6*L_;
@@ -138,6 +138,7 @@ public:
         printf("\tdomain size = (%d %d)\n", imax, jmax);
         printf("\tghost cell = %d\n", Ghost_cell);
         printf("\trelaxation rate = %lf\n", omega);
+        printf("\tRe = %lf\n", Re);
     }
 };
 
@@ -493,45 +494,24 @@ void apply_fbc(
     }
 }
 
-double get_drag(
-    double9_t *f,
-    int imax,
-    int jmax
-) {
-    const int ia = (center_x_ - 0.5*L_)*Cells_per_length + 1;
-    const int ib = (center_x_ + 0.5*L_)*Cells_per_length + 1;
-    const int ja = (center_y_ - 0.5*L_)*Cells_per_length + 1;
-    const int jb = (center_y_ + 0.5*L_)*Cells_per_length + 1;
+class CdMonitor {
+    int imax, jmax;
+    int ia, ib, ja, jb;
 
-    double pressure_l = 0;
-    #pragma acc parallel loop independent \
-    reduction(+:pressure_l) \
-    present(f[:imax*jmax]) \
-    firstprivate(imax, jmax)
-    for (int j = ja; j < jb; j ++) {
-        const int lat = (ia - 1)*jmax + j;
-        double ru, rv, r;
-        get_statistics(f[lat], ru, rv, r);
-        pressure_l += (r - 1.0);
+    double get_cd(double9_t *f) {
+        double drag = 0;
+        /* drag force on left face */
+        for (int j = ja; j < jb; j ++) {
+            const int i = ia - 1;
+            const int lat = i*jmax + j;
+            double u, v, rho;
+            get_statistics(f[lat], u, v, rho);
+            drag += rho*csq*dx;
+        }
+
+        return 2*drag/(U*U*(ib - ia)*dx);
     }
-    pressure_l *= dx*csq;
-
-    double pressure_r = 0;
-    #pragma acc parallel loop independent \
-    reduction(+:pressure_r) \
-    present(f[:imax*jmax]) \
-    firstprivate(imax, jmax)
-    for (int j = ja; j < jb; j ++) {
-        const int lat = ib*jmax + j;
-        double ru, rv, r;
-        get_statistics(f[lat], ru, rv, r);
-        pressure_r += (r - 1.0);
-    }
-    pressure_r *= dx*csq;
-
-    return (pressure_l - pressure_r)*Cpressure_;
-
-}
+};
 
 Cumu *init(int imax, int jmax, double tau) {
     Cumu *cumu = new Cumu(imax, jmax, 1./tau);
@@ -564,19 +544,19 @@ void output(Cumu *cumu) {
     self(cumu->f[:cumu->imax*cumu->jmax])
 
     FILE *file = fopen("data/cumu.csv", "w");
-    fprintf(file, "x,y,z,u,v,w,rho\n");
+    fprintf(file, "x,y,z,u,v,w,p\n");
     for (int j = 1; j < cumu->jmax - 1; j ++) {
     for (int i = 1; i < cumu->imax - 1; i ++) {
         const int lat = i*cumu->jmax + j;
         double rho, phix, phiy;
         get_statistics(cumu->f[lat], phix, phiy, rho);
-        double u = phix/rho, v = phiy/rho;
+        double u = phix/rho, v = phiy/rho, p = (rho-1)*csq*Cpressure_;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
             (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
             u*Cu_, v*Cu_, 0.0,
-            rho
+            p
         );
     }}
     fclose(file);
@@ -587,19 +567,19 @@ void output(Cumu *cumu, int n) {
     self(cumu->f[:cumu->imax*cumu->jmax])
 
     FILE *file = fopen(("data/cumu.csv." + std::to_string(n)).c_str(), "w");
-    fprintf(file, "x,y,z,u,v,w,rho\n");
+    fprintf(file, "x,y,z,u,v,w,p\n");
     for (int j = 1; j < cumu->jmax - 1; j ++) {
     for (int i = 1; i < cumu->imax - 1; i ++) {
         const int lat = i*cumu->jmax + j;
         double rho, phix, phiy;
         get_statistics(cumu->f[lat], phix, phiy, rho);
-        double u = phix/rho, v = phiy/rho;
+        double u = phix/rho, v = phiy/rho, p = (rho-1)*csq*Cpressure_;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
             (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
             u*Cu_, v*Cu_, 0.0,
-            rho
+            p
         );
     }}
     fclose(file);
@@ -643,20 +623,21 @@ int main() {
     auto end = std::chrono::high_resolution_clock::now();
     auto elapse = std::chrono::duration_cast<std::chrono::seconds>(end - begin);
     printf("\n%d\n", elapse);
-    output(cumu, 0);
-    std::ofstream drag_history("data/drag_history.csv");
-    drag_history << "t,drag\n";
+    // output(cumu, 0);
+    // std::ofstream drag_history("data/drag_history.csv");
+    // drag_history << "t,drag\n";
     for (int step = 1; step <= N_post; step ++) {
         main_loop(cumu);
-        drag_history << (step + N_pre)*dt_ << "," << get_drag(cumu->f, cumu->imax, cumu->jmax) << std::endl;
+        // drag_history << (step + N_pre)*dt_ << "," << get_drag(cumu->f, cumu->imax, cumu->jmax) << std::endl;
         printf("\r%d/%d", step, N_post);
         fflush(stdout);
         if (step % int(1/dt_) == 0) {
-            output(cumu, step / int(1/dt_));
+            // output(cumu, step / int(1/dt_));
         }
         probe.write(cumu->f, (step + N_pre)*dt_);
     }
-    drag_history.close();
+    output(cumu);
+    // drag_history.close();
     printf("\n");
     finalize(cumu);
 }
