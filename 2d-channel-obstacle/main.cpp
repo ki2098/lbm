@@ -73,9 +73,9 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 500;
-const double Lx_ = 30*L_;
-const double Ly_ = 20*L_;
+const double Re = 200;
+const double Lx_ = 40*L_;
+const double Ly_ = 30*L_;
 const int Cells_per_length = 20;
 const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
@@ -99,10 +99,10 @@ const double Cpressure_ = 1.*Cu_*Cu_;
 
 const double T_pre = 500;
 const int N_pre = T_pre/dt_;
-const double T_post = 1000;
+const double T_post = 500;
 const int N_post = T_post/dt_;
 
-const double center_x_ = 6*L_;
+const double center_x_ = 10*L_;
 const double center_y_ = Ly_/2;
 
 class Cumu {
@@ -422,16 +422,16 @@ void apply_fbc(
     present(f[:imax*jmax], fpost[:imax*jmax], Ve, Wgt) \
     firstprivate(imax, jmax, u_inflow)
     for (int j = 1; j < jmax - 1; j ++) {
-        // const int i = 1;
-        // const int lat = i*jmax + j;
-        // const int flist[]{6,7,8};
-        // for (int fid : flist) {
-        //     const int lnk = 8 - fid;
-        //     f[lat][fid] = fpost[lat][lnk] - Ve[lnk][0]*2*u_inflow*Wgt[lnk]*csqi;
-        // }
-        const int i = 0;
+        const int i = 1;
         const int lat = i*jmax + j;
-        f[lat] = cumulant_to_pdf(get_equilibrium_cumulant(1., u_inflow, 0.));
+        const int flist[]{6,7,8};
+        for (int fid : flist) {
+            const int lnk = 8 - fid;
+            f[lat][fid] = fpost[lat][lnk] - Ve[lnk][0]*2*u_inflow*Wgt[lnk]*csqi;
+        }
+        // const int i = 0;
+        // const int lat = i*jmax + j;
+        // f[lat] = cumulant_to_pdf(get_equilibrium_cumulant(1., u_inflow, 0.));
     }
 
     const int ia = (center_x_ - 0.5*L_)*Cells_per_length + 1;
@@ -487,29 +487,93 @@ void apply_fbc(
     present(f[:imax*jmax], fpost[:imax*jmax]) \
     firstprivate(imax, jmax)
     {
-        f[(ia-1)*jmax + (ja-1)][0] = fpost[(ia-1)*jmax + (ja-1)][8];
-        f[(ia-1)*jmax + (jb  )][2] = fpost[(ia-1)*jmax + (jb  )][6];
-        f[(ib  )*jmax + (ja-1)][6] = fpost[(ib  )*jmax + (ja-1)][2];
-        f[(ib  )*jmax + (jb  )][8] = fpost[(ib  )*jmax + (jb  )][0];
+        f[(ia - 1)*jmax + (ja - 1)][0] = fpost[(ia - 1)*jmax + (ja - 1)][8];
+        f[(ia - 1)*jmax + (jb    )][2] = fpost[(ia - 1)*jmax + (jb    )][6];
+        f[(ib    )*jmax + (ja - 1)][6] = fpost[(ib    )*jmax + (ja - 1)][2];
+        f[(ib    )*jmax + (jb    )][8] = fpost[(ib    )*jmax + (jb    )][0];
     }
 }
 
 class CdMonitor {
+public:
     int imax, jmax;
     int ia, ib, ja, jb;
+    bool file_o;
+    std::ofstream ofs;
 
-    double get_cd(double9_t *f) {
+    CdMonitor(int ia, int ib, int ja, int jb, int imax, int jmax, bool file_o):
+    ia(ia), ib(ib), ja(ja), jb(jb), imax(imax), jmax(jmax), file_o(file_o) {
+        if (file_o) {
+            ofs.open("data/cd_history.csv");
+            ofs << "t,cd\n";
+        }
+        #pragma acc enter data \
+        copyin(this[0:1])
+    }
+
+    double get_cd(double9_t *f, double t) {
         double drag = 0;
-        /* drag force on left face */
+        /* pressure drag on left face */
+        #pragma acc parallel loop independent \
+        reduction(+:drag) \
+        present(f[:imax*jmax], this[0:1]) 
         for (int j = ja; j < jb; j ++) {
             const int i = ia - 1;
             const int lat = i*jmax + j;
-            double u, v, rho;
-            get_statistics(f[lat], u, v, rho);
-            drag += rho*csq*dx;
+            double phix, phiy, rho;
+            get_statistics(f[lat], phix, phiy, rho);
+            drag += (rho - 1)*csq*dx;
         }
 
-        return 2*drag/(U*U*(ib - ia)*dx);
+        /* pressure drag on right face */
+        #pragma acc parallel loop independent \
+        reduction(+:drag) \
+        present(f[:imax*jmax], this[0:1]) 
+        for (int j = ja; j < jb; j ++) {
+            const int i = ib;
+            const int lat = i*jmax + j;
+            double phix, phiy, rho;
+            get_statistics(f[lat], phix, phiy, rho);
+            drag += (- (rho - 1)*csq*dx);
+        }
+
+        /* shear drag on upper face */
+        #pragma acc parallel loop independent \
+        reduction(+:drag) \
+        present(f[:imax*jmax], this[0:1]) 
+        for (int i = ia; i < ib; i ++) {
+            const int j = jb;
+            const int lat = i*jmax + j;
+            double phix, phiy, rho;
+            get_statistics(f[lat], phix, phiy, rho);
+            drag += 2*nu*phix*dx;
+        }
+
+        /* shear drag on lower face */
+        #pragma acc parallel loop independent \
+        reduction(+:drag) \
+        present(f[:imax*jmax], this[0:1]) 
+        for (int i = ia; i < ib; i ++) {
+            const int j = ja - 1;
+            const int lat = i*jmax + j;
+            double phix, phiy, rho;
+            get_statistics(f[lat], phix, phiy, rho);
+            drag += 2*nu*phix*dx;
+        }
+
+        double cd = 2*drag/(1.*U*U*(jb - ja)*dx);
+        if (file_o) {
+            ofs << t << "," << cd << std::endl;
+        }
+        return cd;
+    }
+
+    ~CdMonitor() {
+        #pragma acc exit data \
+        delete(this[0:1])
+        if (file_o) {
+            ofs.close();
+        }
     }
 };
 
@@ -550,11 +614,11 @@ void output(Cumu *cumu) {
         const int lat = i*cumu->jmax + j;
         double rho, phix, phiy;
         get_statistics(cumu->f[lat], phix, phiy, rho);
-        double u = phix/rho, v = phiy/rho, p = (rho-1)*csq*Cpressure_;
+        double u = phix/rho, v = phiy/rho, p = (rho - 1)*csq*Cpressure_;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
-            (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
+            (i - 1 + 0.5)*dx_, (j - 1 + 0.5)*dx_, 0.0,
             u*Cu_, v*Cu_, 0.0,
             p
         );
@@ -573,11 +637,11 @@ void output(Cumu *cumu, int n) {
         const int lat = i*cumu->jmax + j;
         double rho, phix, phiy;
         get_statistics(cumu->f[lat], phix, phiy, rho);
-        double u = phix/rho, v = phiy/rho, p = (rho-1)*csq*Cpressure_;
+        double u = phix/rho, v = phiy/rho, p = (rho - 1)*csq*Cpressure_;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
-            (i-1+0.5)*dx_, (j-1+0.5)*dx_, 0.0,
+            (i - 1 + 0.5)*dx_, (j - 1 + 0.5)*dx_, 0.0,
             u*Cu_, v*Cu_, 0.0,
             p
         );
@@ -613,7 +677,21 @@ public:
 
 int main() {  
     Cumu *cumu = init(Lx_*Cells_per_length + 2*Ghost_cell, Ly_*Cells_per_length + 2*Ghost_cell, tau);
-    Probe probe((center_x_ + L_)*Cells_per_length + 1, (center_y_ + 0.5*L_)*Cells_per_length + 1, Lx_*Cells_per_length + 2*Ghost_cell, Ly_*Cells_per_length + 2*Ghost_cell);
+    Probe probe(
+        (center_x_ + L_)*Cells_per_length + 1,
+        (center_y_ + 0.5*L_)*Cells_per_length + 1,
+        Lx_*Cells_per_length + 2*Ghost_cell,
+        Ly_*Cells_per_length + 2*Ghost_cell
+    );
+    CdMonitor cd_monitor(
+        (center_x_ - 0.5*L_)*Cells_per_length + 1,
+        (center_x_ + 0.5*L_)*Cells_per_length + 1,
+        (center_y_ - 0.5*L_)*Cells_per_length + 1,
+        (center_y_ + 0.5*L_)*Cells_per_length + 1,
+        Lx_*Cells_per_length + 2*Ghost_cell,
+        Ly_*Cells_per_length + 2*Ghost_cell,
+        true
+    );
     auto begin = std::chrono::high_resolution_clock::now();
     for (int step = 1; step <= N_pre; step ++) {
         main_loop(cumu);
@@ -623,18 +701,16 @@ int main() {
     auto end = std::chrono::high_resolution_clock::now();
     auto elapse = std::chrono::duration_cast<std::chrono::seconds>(end - begin);
     printf("\n%d\n", elapse);
-    // output(cumu, 0);
-    // std::ofstream drag_history("data/drag_history.csv");
-    // drag_history << "t,drag\n";
+
     for (int step = 1; step <= N_post; step ++) {
         main_loop(cumu);
-        // drag_history << (step + N_pre)*dt_ << "," << get_drag(cumu->f, cumu->imax, cumu->jmax) << std::endl;
         printf("\r%d/%d", step, N_post);
         fflush(stdout);
         if (step % int(1/dt_) == 0) {
             // output(cumu, step / int(1/dt_));
         }
         probe.write(cumu->f, (step + N_pre)*dt_);
+        cd_monitor.get_cd(cumu->f, (step + N_pre)*dt_);
     }
     output(cumu);
     // drag_history.close();
