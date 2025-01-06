@@ -73,9 +73,9 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 200;
-const double Lx_ = 40*L_;
-const double Ly_ = 30*L_;
+const double Re = 50;
+const double Lx_ = 50*L_;
+const double Ly_ = 25*L_;
 const int Cells_per_length = 20;
 const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
@@ -97,9 +97,9 @@ const double Re_lattice = U*dx/nu;
 const double CFL = U_*dt_/dx_;
 const double Cpressure_ = 1.*Cu_*Cu_;
 
-const double T_pre = 500;
+const double T_pre = 2000;
 const int N_pre = T_pre/dt_;
-const double T_post = 500;
+const double T_post = 0;
 const int N_post = T_post/dt_;
 
 const double center_x_ = 10*L_;
