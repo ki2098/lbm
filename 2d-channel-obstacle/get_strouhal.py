@@ -11,7 +11,7 @@ amp = (maximum - minimum)/2
 value = (value - (maximum + minimum)/2)/amp
 fft = 2*np.fft.fft(value)/value.size
 power = (np.abs(fft))**2
-dt = 0.0025
+dt = 0.005
 freq = np.fft.fftfreq(value.size, dt)
 # idx = np.argsort(freq)
 
