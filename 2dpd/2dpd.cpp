@@ -52,8 +52,8 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 5.8e5;
-const double Ox_ = -7.5*L_;
+const double Re = 2.9e5;
+const double Ox_ = -5*L_;
 const double Oy_ = -7.5*L_;
 const double Lx_ = 30*L_;
 const double Ly_ = -2*Oy_;
@@ -65,7 +65,7 @@ const double dx = 1;
 const double Cx_ = dx_/dx;
 const double Ox = Ox_/Cx_;
 const double Oy = Oy_/Cx_;
-const double U = 0.05;
+const double U = 0.025;
 const double Cu_ = U_/U;
 const double Ct_ = Cx_/Cu_;
 const double dt = 1;
@@ -81,19 +81,25 @@ const double CFL = U_*dt_/dx_;
 const double Cpressure_ = 1.*Cu_*Cu_;
 
 const double CDD_ = 13;
-const double Turbine_x_ = 0;
-const double Turbine_y_ = 0;
+const double Turbine_xy_[2][2] = {
+    {0., 0.},
+    {5., 1.}
+};
 const double Diameter_ = 1.5;
 const double Thick_ = 0.03;
 
 const double Ccdd_ = 1./Cx_;
 const double CDD = CDD_/Ccdd_;
-const double Turbine_x = Turbine_x_/Cx_;
-const double Turbine_y = Turbine_y_/Cx_;
+const double Turbine_xy[2][2] = {
+    {Turbine_xy_[0][0]/Cx_, Turbine_xy_[0][1]/Cx_},
+    {Turbine_xy_[1][0]/Cx_, Turbine_xy_[1][1]/Cx_}
+};
+#pragma acc declare \
+copyin(Turbine_xy)
 const double Diameter = Diameter_/Cx_;
 const double Thick = Thick_/Cx_;
 
-const double T_ = 100;
+const double T_ = 300;
 const int Nt = T_/dt_;
 
 template<typename T>
@@ -115,22 +121,27 @@ public:
     int imax, jmax;
 
     PorousDisk(int imax, int jmax) : imax(imax), jmax(jmax) {
-        dfunc = new double[imax*jmax];
+        dfunc = new double[imax*jmax]{};
         for (int i = 0; i < imax; i ++) {
         for (int j = 0; j < jmax; j ++) {
             double x0 = Ox + dx*(i - 1);
             double x1 = Ox + dx*(i);
             double y0 = Oy + dx*(j - 1);
             double y1 = Oy + dx*(j);
-            double x2 = Turbine_x - 0.5*Thick;
-            double x3 = Turbine_x + 0.5*Thick;
-            double y2 = Turbine_y - 0.5*Diameter;
-            double y3 = Turbine_y + 0.5*Diameter;
-            double sigma = Diameter/6;
-            double d = fabs(0.5*(y0 + y1) - Turbine_y);
-            double cover = intersection_length(x0, x1, x2, x3)*intersection_length(y0, y1, y2, y3);
-            const int lat = i*jmax + j;
-            dfunc[lat] = CDD*exp(-0.5*sq(d/sigma))*cover/(dx*dx);
+            for (int t = 1; t < 2; t ++) {
+                double x2 = Turbine_xy[t][0] - 0.5*Thick;
+                double x3 = Turbine_xy[t][0] + 0.5*Thick;
+                double y2 = Turbine_xy[t][1] - 0.5*Diameter;
+                double y3 = Turbine_xy[t][1] + 0.5*Diameter;
+                double cover = intersection_length(x0, x1, x2, x3)*intersection_length(y0, y1, y2, y3);
+                if (cover > 0) {
+                    double sigma = Diameter/6;
+                    double d = fabs(0.5*(y0 + y1) - Turbine_xy[t][1]);
+                    const int lat = i*jmax + j;
+                    dfunc[lat] = CDD*exp(-0.5*sq(d/sigma))*cover/(dx*dx);
+                    break;
+                }
+            }
         }}
 
         #pragma acc enter data \
@@ -503,18 +514,32 @@ void apply_fbc(
     // present(f[:imax*jmax], fprev[:imax*jmax], mac[:imax*jmax], Ve, Wgt) \
     // firstprivate(imax, jmax, u_inflow)
     // for (int j = 1; j < jmax - 1; j ++) {
+    //     // const int i = imax - 2;
+    //     // const int lat = i*jmax + j;
+    //     // const int li1 = (i - 1)*jmax + j;
+    //     // const int li2 = (i - 2)*jmax + j;
+    //     // double u0 = mac[lat][1];
+    //     // double u1 = mac[li1][1];
+    //     // double u2 = mac[li2][1];
+    //     // double v0 = mac[lat][2];
+    //     // double v1 = mac[li1][2];
+    //     // double v2 = mac[li2][2];
+    //     // double dudx = 0.5*(3*u0 - 4*u1 + u2);
+    //     // double dvdx = 0.5*(3*v0 - 4*v1 + v2);
+    //     // const int qlist[]{0,1,2};
+    //     // const double cs = sqrt(csq);
+    //     // for (int q : qlist) {
+    //     //     f[lat][q] = fprev[lat][q] - 3*Wgt[q]*u0*(dudx*Ve[q][0] + dvdx*Ve[q][1]);
+    //     // }
     //     const int i = imax - 2;
     //     const int lat = i*jmax + j;
-    //     const int li1 = (i - 1)*jmax + j;
-    //     const int li2 = (i - 2)*jmax + j;
+    //     const int lin = (i - 1)*jmax + j;
     //     double u0 = mac[lat][1];
-    //     double u1 = mac[li1][1];
-    //     double u2 = mac[li2][1];
+    //     double u1 = mac[lin][1];
     //     double v0 = mac[lat][2];
-    //     double v1 = mac[li1][2];
-    //     double v2 = mac[li2][2];
-    //     double dudx = 0.5*(3*u0 - 4*u1 + u2);
-    //     double dvdx = 0.5*(3*v0 - 4*v1 + v2);
+    //     double v1 = mac[lin][2];
+    //     double dudx = u0 - u1;
+    //     double dvdx = v0 - v1;
     //     const int qlist[]{0,1,2};
     //     const double cs = sqrt(csq);
     //     for (int q : qlist) {
@@ -630,9 +655,15 @@ int main() {
         main_loop(cumu, pd);
         printf("\r%d/%d", step, Nt);
         fflush(stdout);
+
+        if (step*dt_ >= T_ - 10) {
+            if (step % int(0.5/dt_) == 0) {
+                std::string path = "data/o.csv." + std::to_string(step / int(0.5/dt_));
+                output(cumu, path);
+            }
+        }
     }
     printf("\n");
-    output(cumu, "data/o.csv");
 
     finalize(cumu, pd);
 }

@@ -73,7 +73,7 @@ copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
-const double Re = 400;
+const double Re = 5.8e5;
 const double Lx_ = 50*L_;
 const double Ly_ = 25*L_;
 const int Cells_per_length = 10;
@@ -82,7 +82,7 @@ const double nu_ = L_*U_/Re;
 const double dx_ = 1./Cells_per_length;
 const double dx = 1;
 const double Cx_ = dx_/dx;
-const double U = 0.05;
+const double U = 0.02;
 const double Cu_ = U_/U;
 const double Ct_ = Cx_/Cu_;
 const double dt = 1;
@@ -103,7 +103,7 @@ const double T_post = 500;
 const int N_post = T_post/dt_;
 
 const double center_x_ = 10*L_;
-const double center_y_ = Ly_/2;
+const double center_y_ = Ly_/2 + 2*L_;
 
 class Cumu {
 public:
