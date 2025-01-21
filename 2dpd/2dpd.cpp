@@ -62,15 +62,15 @@ const int Ghost_cell = 1;
 const double nu_ = L_*U_/Re;
 const double dx_ = 1./Cells_per_length;
 const double dx = 1;
-const double Cx_ = dx_/dx;
-const double Ox = Ox_/Cx_;
-const double Oy = Oy_/Cx_;
+const double Cl_ = dx_/dx;
+const double Ox = Ox_/Cl_;
+const double Oy = Oy_/Cl_;
 const double U = 0.025;
 const double Cu_ = U_/U;
-const double Ct_ = Cx_/Cu_;
+const double Ct_ = Cl_/Cu_;
 const double dt = 1;
 const double dt_ = dt*Ct_;
-const double Cnu_ = Cx_*Cu_;
+const double Cnu_ = Cl_*Cu_;
 const double nu = nu_/Cnu_;
 const double csq = 1./3.;
 const double csqi = 3;
@@ -88,16 +88,16 @@ const double Turbine_xy_[2][2] = {
 const double Diameter_ = 1.5;
 const double Thick_ = 0.03;
 
-const double Ccdd_ = 1./Cx_;
-const double CDD = CDD_/Ccdd_;
+const double Ccrc_ = 1./Cl_;
+const double CDD = CDD_/Ccrc_;
 const double Turbine_xy[2][2] = {
-    {Turbine_xy_[0][0]/Cx_, Turbine_xy_[0][1]/Cx_},
-    {Turbine_xy_[1][0]/Cx_, Turbine_xy_[1][1]/Cx_}
+    {Turbine_xy_[0][0]/Cl_, Turbine_xy_[0][1]/Cl_},
+    {Turbine_xy_[1][0]/Cl_, Turbine_xy_[1][1]/Cl_}
 };
 #pragma acc declare \
 copyin(Turbine_xy)
-const double Diameter = Diameter_/Cx_;
-const double Thick = Thick_/Cx_;
+const double Diameter = Diameter_/Cl_;
+const double Thick = Thick_/Cl_;
 
 const double T_ = 300;
 const int Nt = T_/dt_;
@@ -170,7 +170,7 @@ public:
                 file,
                 "%e,%e,%e,%e\n",
                 (i - 0.5)*dx_ + Ox_, (j - 0.5)*dx_ + Oy_, 0.0,
-                dfunc[i*jmax + j]*Ccdd_
+                dfunc[i*jmax + j]*Ccrc_
             );
         }}
         fclose(file);

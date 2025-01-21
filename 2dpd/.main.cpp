@@ -10,6 +10,7 @@
 
 using double9_t = vector_t<double, 9>;
 using double2_t = vector_t<double, 2>;
+using int2_t = vector_t<int, 2>;
 
 const int Ve[9][2] = {
     {-1, -1},
@@ -22,8 +23,6 @@ const int Ve[9][2] = {
     { 1,  0},
     { 1,  1}
 };
-#pragma acc declare \
-copyin(Ve)
 
 const double Wgt[9] = {
     1./36,
@@ -36,8 +35,20 @@ const double Wgt[9] = {
     1./9,
     1./36
 };
+
+const int Cmk[9][2] = {
+    {0, 0},
+    {0, 1},
+    {0, 2},
+    {1, 0},
+    {1, 1},
+    {1, 2},
+    {2, 0},
+    {2, 1},
+    {2, 2}
+};
 #pragma acc declare \
-copyin(Wgt)
+copyin(Ve, Wgt, Cmk)
 
 const double L_ = 1;
 const double U_ = 1;
@@ -54,7 +65,7 @@ const double dx = 1;
 const double Cl_ = dx_/dx;
 const double Ox = Ox_/Cl_;
 const double Oy = Oy_/Cl_;
-const double U = 0.02;
+const double U = 0.025;
 const double Cu_ = U_/U;
 const double Ct_ = Cl_/Cu_;
 const double dt = 1;
@@ -70,17 +81,19 @@ const double CFL = U_*dt_/dx_;
 const double Cpressure_ = 1.*Cu_*Cu_;
 
 const double CRC_ = 13;
-const double Turbine_x_[] = {0., 5.};
-const double Turbine_y_[] = {0., 1.};
+const double Turbine_x_ = 0;
+const double Turbine_y_ = 0 + L_;
 const double Diameter_ = 1.5;
 const double Thick_ = 0.03;
 
 const double Ccrc_ = 1./Cl_;
 const double CRC = CRC_/Ccrc_;
+const double Turbine_x = Turbine_x_/Cl_;
+const double Turbine_y = Turbine_y_/Cl_;
 const double Diameter = Diameter_/Cl_;
 const double Thick = Thick_/Cl_;
 
-const double T_ = 300;
+const double T_ = 1;
 const int Nt = T_/dt_;
 
 template<typename T>
@@ -100,19 +113,19 @@ class Cumu {
 public:
     double9_t *f, *fpost, *fprev, *c, *cpost;
     double2_t *shift;
-    int imax, jmax;
+    int2_t sz;
     double omega;
 
-    Cumu(int imax, int jmax, double omega) : imax(imax), jmax(jmax), omega(omega) {
-        f = new double9_t[imax*jmax];
-        fpost = new double9_t[imax*jmax];
-        fprev = new double9_t[imax*jmax];
-        c = new double9_t[imax*jmax];
-        cpost = new double9_t[imax*jmax];
-        shift = new double2_t[imax*jmax];
+    Cumu(int2_t sz, double omega) : sz(sz), omega(omega) {
+        f = new double9_t[sz[0]*sz[1]];
+        fpost = new double9_t[sz[0]*sz[1]];
+        fprev = new double9_t[sz[0]*sz[1]];
+        c = new double9_t[sz[0]*sz[1]];
+        cpost = new double9_t[sz[0]*sz[1]];
+        shift = new double2_t[sz[0]*sz[1]];
 
         #pragma acc enter data \
-        copyin(this[0:1], f[:imax*jmax], fpost[:imax*jmax], fprev[:imax*jmax], c[:imax*jmax], cpost[:imax*jmax], shift[:imax*jmax])
+        copyin(this[0:1], f[:sz[0]*sz[1]], fpost[:sz[0]*sz[1]], fprev[:sz[0]*sz[1]], c[:sz[0]*sz[1]], cpost[:sz[0]*sz[1]], shift[:sz[0]*sz[1]])
     }
 
     ~Cumu() {
@@ -124,12 +137,12 @@ public:
         delete[] shift;
 
         #pragma acc exit data \
-        delete(f[:imax*jmax], fpost[:imax*jmax], fprev[:imax*jmax], c[:imax*jmax], cpost[:imax*jmax], shift[:imax*jmax], this[0:1])
+        delete(f[:sz[0]*sz[1]], fpost[:sz[0]*sz[1]], fprev[:sz[0]*sz[1]], c[:sz[0]*sz[1]], cpost[:sz[0]*sz[1]], shift[:sz[0]*sz[1]], this[0:1])
     }
 
     void print_info() {
         printf("CUMULANT LBM\n");
-        printf("\tdomain size = (%d %d)\n", imax, jmax);
+        printf("\tdomain size = (%d %d)\n", sz[0], sz[1]);
         printf("\tghost cell = %d\n", Ghost_cell);
         printf("\trelaxation rate = %lf\n", omega);
         printf("\tRe = %lf\n", Re);
@@ -139,59 +152,54 @@ public:
 class PorousDisk {
 public:
     double *dfunc;
-    int imax, jmax;
+    int2_t sz;
 
-    PorousDisk(int imax, int jmax) : imax(imax), jmax(jmax) {
-        dfunc = new double[imax*jmax]{};
-        for (int i = 0; i < imax; i ++) {
-        for (int j = 0; j < jmax; j ++) {
+    PorousDisk(int2_t sz) : sz(sz) {
+        dfunc = new double[sz[0]*sz[1]];
+        for (int i = 0; i < sz[0]; i ++) {
+        for (int j = 0; j < sz[1]; j ++) {
             double x0 = Ox + dx*(i - 1);
             double x1 = Ox + dx*(i);
             double y0 = Oy + dx*(j - 1);
             double y1 = Oy + dx*(j);
-            for (int t = 0; t < sizeof(Turbine_x_)/sizeof(double); t ++) {
-                double x2 = Turbine_x_[t]/Cl_ - 0.5*Thick;
-                double x3 = Turbine_x_[t]/Cl_ + 0.5*Thick;
-                double y2 = Turbine_y_[t]/Cl_ - 0.5*Diameter;
-                double y3 = Turbine_y_[t]/Cl_ + 0.5*Diameter;
-                double cover = intersection_length(x0, x1, x2, x3)*intersection_length(y0, y1, y2, y3);
-                if (cover > 0) {
-                    double sigma = Diameter/6;
-                    double d = fabs(0.5*(y0 + y1) - Turbine_y_[t]/Cl_);
-                    const int l = i*jmax + j;
-                    dfunc[l] = CRC*exp(- 0.5*square(d/sigma))*cover/(dx*dx);
-                    break;
-                }
-            }
+            double x2 = Turbine_x - 0.5*Thick;
+            double x3 = Turbine_x + 0.5*Thick;
+            double y2 = Turbine_y - 0.5*Diameter;
+            double y3 = Turbine_y + 0.5*Diameter;
+            double cover = intersection_length(x0, x1, x2, x3)*intersection_length(y0, y1, y2, y3);
+            double sigma = Diameter/6;
+            double d = fabs(0.5*(y0 + y1) - Turbine_y);
+            const int l = i*sz[1] + j;
+            dfunc[l] = CRC*exp(- 0.5*square(d/sigma))*cover/(dx*dx);
         }}
 
         #pragma acc enter data \
-        copyin(this[0:1], dfunc[:imax*jmax])
+        copyin(this[0:1], dfunc[:sz[0]*sz[1]])
     }
 
     ~PorousDisk() {
         delete[] dfunc;
 
         #pragma acc exit data \
-        delete(dfunc[:imax*jmax], this[0:1])
+        delete(dfunc[:sz[0]*sz[1]], this[0:1])
     }
 
     void print_info() {
         printf("PD INFO\n");
-        printf("\tGlobal size = (%d %d)\n", imax, jmax);
+        printf("\tGlobal size = (%d %d)\n", sz[0], sz[1]);
         printf("\tCRC = %lf\n", CRC_);
     }
 
     void output_dfunc(std::string path) {
         FILE *file = fopen(path.c_str(), "w");
         fprintf(file, "x,y,z,dfunc\n");
-        for (int j = 1; j < jmax - 1; j ++) {
-        for (int i = 1; i < imax - 1; i ++) {
+        for (int j = 1; j < sz[1] - 1; j ++) {
+        for (int i = 1; i < sz[0] - 1; i ++) {
             fprintf(
                 file,
                 "%e,%e,%e,%e\n",
                 (i - 0.5)*dx_ + Ox_, (j - 0.5)*dx_ + Oy_, 0.0,
-                dfunc[i*jmax + j]*Ccrc_
+                dfunc[i*sz[1] + j]*Ccrc_
             );
         }}
         fclose(file);
@@ -201,8 +209,7 @@ public:
 void get_macroscopic_val(
     const double9_t f,
     const double2_t shift,
-    double &u,
-    double &v,
+    double2_t &U,
     double &density
 ) {
     double m10 = 0, m01 = 0, m00 = 0;
@@ -211,19 +218,20 @@ void get_macroscopic_val(
         m01 += Ve[q][1]*f[q];
         m00 += f[q];
     }
-    u = (m10 +shift[0])/m00;
-    v = (m01 +shift[1])/m00;
+    U = {{
+        (m10 +shift[0])/m00,
+        (m01 +shift[1])/m00
+    }};
     density = m00;
 }
 
 double9_t get_eq_cumulant(
-    const double u,
-    const double v,
+    const double2_t U,
     const double density
 ) {
     return double9_t{{
-        /** 00       01          02         10      11 12      20      21 22 */
-        density, density*v, csq*density, density*u, 0, 0, csq*density, 0, 0
+        /** 00       01           02          10          11 12      20      21 22 */
+        density, density*U[1], csq*density, density*U[0], 0, 0, csq*density, 0, 0
     }};
 }
 
@@ -255,7 +263,9 @@ double9_t raw_to_pdf(const double9_t m) {
     }};
 }
 
-double9_t raw_to_central(const double9_t m, const double u, const double v) {
+double9_t raw_to_central(const double9_t m, const double2_t U) {
+    const double u = U[0];
+    const double v = U[1];
     const double uu = u*u;
     const double vv = v*v;
     return double9_t{{
@@ -271,7 +281,9 @@ double9_t raw_to_central(const double9_t m, const double u, const double v) {
     }};
 }
 
-double9_t central_to_raw(const double9_t k, const double u, const double v) {
+double9_t central_to_raw(const double9_t k, const double2_t U) {
+    const double u = U[0];
+    const double v = U[1];
     const double uu = u*u;
     const double vv = v*v;
     return double9_t{{
@@ -287,9 +299,11 @@ double9_t central_to_raw(const double9_t k, const double u, const double v) {
     }};
 }
 
-double9_t central_to_cumulant(const double9_t k, const double u, const double v) {
-    double9_t c;
+double9_t central_to_cumulant(const double9_t k, const double2_t U) {
+    const double u = U[0];
+    const double v = U[1];
     const double density = k[0];
+    double9_t c;
     c[0] = density;
     c[1] = v*density;
     c[3] = u*density;
@@ -303,8 +317,8 @@ double9_t central_to_cumulant(const double9_t k, const double u, const double v)
 }
 
 double9_t cumulant_to_central(const double9_t c, const double2_t shift) {
-    double9_t k;
     const double density = c[0];
+    double9_t k;
     k[0] = density;
     k[1] = shift[1];
     k[3] = shift[0];
@@ -321,30 +335,30 @@ double9_t pdf_to_cumulant(
     const double9_t f,
     const double2_t shift
 ) {
-    double u, v, density;
-    get_macroscopic_val(f, shift, u, v, density);
-    return central_to_cumulant(raw_to_central(pdf_to_raw(f), u, v), u, v);
+    double2_t U;
+    double density;
+    get_macroscopic_val(f, shift, U, density);
+    return central_to_cumulant(raw_to_central(pdf_to_raw(f), U), U);
 }
 
 double9_t cumulant_to_pdf(
     const double9_t c,
     const double2_t shift
 ) {
-    double u = c[3]/c[0], v = c[1]/c[0];
-    return raw_to_pdf(central_to_raw(cumulant_to_central(c, shift), u, v));
+    double2_t U{{c[3]/c[0], c[1]/c[0]}};
+    return raw_to_pdf(central_to_raw(cumulant_to_central(c, shift), U));
 }
 
 void compute_cumulant(
     const double9_t *f,
     const double2_t *shift,
     double9_t *c,
-    const int imax,
-    const int jmax
+    const int2_t sz
 ) {
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], c[:imax*jmax], shift[:imax*jmax], Ve) \
-    firstprivate(imax, jmax)
-    for (int i = 0; i < imax*jmax; i ++) {
+    present(f[:sz[0]*sz[1]], c[:sz[0]*sz[1]], shift[:sz[0]*sz[1]], Ve, Cmk) \
+    firstprivate(sz)
+    for (int i = 0; i < sz[0]*sz[1]; i ++) {
         c[i] = pdf_to_cumulant(f[i], shift[i]);
     }
 }
@@ -372,13 +386,12 @@ void do_collision(
     const double2_t *shift,
     double9_t *cp,
     const double omega,
-    const int imax,
-    const int jmax
+    const int2_t sz
 ) {
     #pragma acc parallel loop independent \
-    present(c[:imax*jmax], shift[:imax*jmax], cp[:imax*jmax]) \
-    firstprivate(omega, imax, jmax)
-    for (int i = 0; i < imax*jmax; i ++) {
+    present(c[:sz[0]*sz[1]], shift[:sz[0]*sz[1]], cp[:sz[0]*sz[1]]) \
+    firstprivate(omega, sz)
+    for (int i = 0; i < sz[0]*sz[1]; i ++) {
         cp[i] = relax_cumulant(c[i], omega);
     }
 }
@@ -387,13 +400,12 @@ void compute_post_pdfs(
     const double9_t *cp,
     const double2_t *shift,
     double9_t *fp,
-    const int imax,
-    const int jmax
+    const int2_t sz
 ) {
     #pragma acc parallel loop independent \
-    present(cp[:imax*jmax], shift[:imax*jmax], fp[:imax*jmax]) \
-    firstprivate(imax, jmax)
-    for (int i = 0; i < imax*jmax; i ++) {
+    present(cp[:sz[0]*sz[1]], shift[:sz[0]*sz[1]], fp[:sz[0]*sz[1]]) \
+    firstprivate(sz)
+    for (int i = 0; i < sz[0]*sz[1]; i ++) {
         fp[i] = cumulant_to_pdf(cp[i], shift[i]);
     }
 }
@@ -401,17 +413,16 @@ void compute_post_pdfs(
 void do_streaming(
     const double9_t *fp,
     double9_t *f,
-    const int imax,
-    const int jmax
+    const int2_t sz
 ) {
     #pragma acc parallel loop independent collapse(3) \
-    present(fp[:imax*jmax], f[:imax*jmax]) \
-    firstprivate(imax, jmax)
-    for (int i = 1; i < imax - 1; i ++) {
-    for (int j = 1; j < jmax - 1; j ++) {
+    present(fp[:sz[0]*sz[1]], f[:sz[0]*sz[1]]) \
+    firstprivate(sz)
+    for (int i = 1; i < sz[0] - 1; i ++) {
+    for (int j = 1; j < sz[1] - 1; j ++) {
     for (int q = 0; q < 9        ; q ++) {
-        int src = (i - Ve[q][0])*jmax + (j - Ve[q][1]);
-        int dst = i*jmax + j;
+        int src = (i - Ve[q][0])*sz[1] + (j - Ve[q][1]);
+        int dst = i*sz[1] + j;
         f[dst][q] = fp[src][q];
     }}}
 }
@@ -431,72 +442,73 @@ void apply_bc(
     const double9_t *fpost,
     const double9_t *fprev,
     const double2_t *shift,
-    const double u_inlet,
-    const int imax,
-    const int jmax
+    double u_inlet,
+    int2_t sz
 ) {
     /** bottom slip */
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], fpost[:imax*jmax], Ve) \
-    firstprivate(imax, jmax)
-    for (int i = 1; i < imax - 1; i ++) {
+    present(f[:sz[0]*sz[1]], fpost[:sz[0]*sz[1]], Ve) \
+    firstprivate(sz)
+    for (int i = 1; i < sz[0] - 1; i ++) {
         const int j = 1;
         const int qlist[]{2, 5, 8};
         for (int q : qlist) {
             const int p = q - 2;
-            const int dst = i*jmax + j;
-            const int src = (i - Ve[p][0])*jmax + j;
+            const int dst = i*sz[1] + j;
+            const int src = (i - Ve[p][0])*sz[1] + j;
             f[dst][q] = fpost[src][p];
         }
     }
 
     /** top slip */
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], fpost[:imax*jmax], Ve) \
-    firstprivate(imax, jmax)
-    for (int i = 1; i < imax - 1; i ++) {
-        const int j = jmax - 2;
+    present(f[:sz[0]*sz[1]], fpost[:sz[0]*sz[1]], Ve) \
+    firstprivate(sz)
+    for (int i = 1; i < sz[0] - 1; i ++) {
+        const int j = sz[1] - 2;
         const int qlist[]{0, 3, 6};
         for (int q : qlist) {
             const int p = q + 2;
-            const int dst = i*jmax + j;
-            const int src = (i - Ve[p][0])*jmax + j;
+            const int dst = i*sz[1] + j;
+            const int src = (i - Ve[p][0])*sz[1] + j;
             f[dst][q] = fpost[src][p];
         }
     }
 
     /** right convective outlet */
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], fprev[:imax*jmax], shift[:imax*jmax], Ve, Wgt) \
-    firstprivate(imax, jmax)
-    for (int j = 1; j < jmax - 1; j ++) {
-        const int i = imax - 2;
-        const int l0 = (i    )*jmax + j;
-        const int l1 = (i - 1)*jmax + j;
-        const int l2 = (i - 2)*jmax + j;
-        double u0, u1, u2, v0, v1, v2, density0, density1, density2;
-        get_macroscopic_val(fprev[l0], shift[l0], u0, v0, density0);
-        get_macroscopic_val(fprev[l1], shift[l1], u1, v1, density1);
-        get_macroscopic_val(fprev[l2], shift[l2], u2, v2, density2);
+    present(f[:sz[0]*sz[1]], fprev[:sz[0]*sz[1]], shift[:sz[0]*sz[1]], Ve, Wgt) \
+    firstprivate(sz)
+    for (int j = 1; j < sz[1] - 1; j ++) {
+        const int i = sz[0] - 2;
+        const int l0 = (i    )*sz[1] + j;
+        const int l1 = (i - 1)*sz[1] + j;
+        const int l2 = (i - 2)*sz[1] + j;
+        double2_t U0, U1, U2;
+        double density0, density1, density2;
+        get_macroscopic_val(fprev[l0], shift[l0], U0, density0);
+        get_macroscopic_val(fprev[l1], shift[l1], U1, density1);
+        get_macroscopic_val(fprev[l2], shift[l2], U2, density2);
         double2_t gradient{{
-            3*u0*density0 - 4*u1*density1 + u2*density2,
-            3*v0*density0 - 4*v1*density1 + v2*density2
+            3*U0[0]*density0 - 4*U1[0]*density1 + U2[0]*density2,
+            3*U0[1]*density0 - 4*U1[1]*density1 + U2[1]*density2
         }};
         const int qlist[]{0, 1, 2};
         for (int q : qlist) {
-            f[l0][q] = fprev[l0][q] - 1.5*Wgt[q]*u0*(gradient[0]*Ve[q][0] + gradient[1]*Ve[q][1]);
+            f[l0][q] = fprev[l0][q] - 1.5*Wgt[q]*U0[0]*(gradient[0]*Ve[q][0] + gradient[1]*Ve[q][1]);
         }
     }
 
     /** left fixed velocity inlet */
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], fpost[:imax*jmax], shift[:imax*jmax], Ve, Wgt) \
-    firstprivate(imax, jmax, u_inlet)
-    for (int j = 1; j < jmax - 1; j ++) {
+    present(f[:sz[0]*sz[1]], fpost[:sz[0]*sz[1]], shift[:sz[0]*sz[1]], Ve, Wgt) \
+    firstprivate(sz, u_inlet)
+    for (int j = 1; j < sz[1] - 1; j ++) {
         const int i = 1;
-        const int l = i*jmax + j;
-        double u, v, density;
-        get_macroscopic_val(f[l], shift[l], u, v, density);
+        const int l = i*sz[1] + j;
+        double2_t U;
+        double density;
+        get_macroscopic_val(f[l], shift[l], U, density);
         const int qlist[]{6, 7, 8};
         for (int q : qlist) {
             const int lnk = 8 - q;
@@ -509,59 +521,61 @@ void compute_shift(
     const double9_t *f,
     const double *dfunc,
     double2_t *shift,
-    const int imax,
-    const int jmax
+    const int2_t sz
 ) {
     #pragma acc parallel loop independent \
-    present(f[:imax*jmax], dfunc[:imax*jmax], shift[:imax*jmax]) \
-    firstprivate(imax, jmax)
-    for (int i = 0; i < imax*jmax; i ++) {
-        double u, v, density;
-        get_macroscopic_val(f[i], shift[i], u, v, density);
-        double Uabs = sqrt(u*u + v*v);
-        shift[i][0] = - 0.5*u*Uabs*dfunc[i];
-        shift[i][1] = - 0.5*v*Uabs*dfunc[i];
+    present(f[:sz[0]*sz[1]], dfunc[:sz[0]*sz[1]], shift[:sz[0]*sz[1]]) \
+    firstprivate(sz)
+    for (int i = 0; i < sz[0]*sz[1]; i ++) {
+        double2_t U;
+        double density;
+        get_macroscopic_val(f[i], shift[i], U, density);
+        double Uabs = sqrt(U[0]*U[0] + U[1]*U[1]);
+        shift[i][0] = - 0.5*U[0]*Uabs*dfunc[i];
+        shift[i][1] = - 0.5*U[1]*Uabs*dfunc[i];
     }
 }
 
 void output(Cumu *cumu, std::string path) {
-    int imax = cumu->imax, jmax = cumu->jmax;
+    int2_t sz = cumu->sz;
     #pragma acc update \
-    self(cumu->f[:imax*jmax], cumu->shift[:imax*jmax])
+    self(cumu->f[:sz[0]*sz[1]], cumu->shift[:sz[0]*sz[1]])
     
     FILE *file = fopen(path.c_str(), "w");
     fprintf(file, "x,y,z,u,v,w,p\n");
-    for (int j = 1; j < jmax - 1; j ++) {
-    for (int i = 1; i < imax - 1; i ++) {
-        const int l = i *jmax + j;
-        double u, v, density;
-        get_macroscopic_val(cumu->f[l], cumu->shift[l], u, v, density);
+    for (int j = 1; j < sz[1] - 1; j ++) {
+    for (int i = 1; i < sz[0] - 1; i ++) {
+        const int l = i *sz[1] + j;
+        double2_t U;
+        double density;
+        get_macroscopic_val(cumu->f[l], cumu->shift[l], U, density);
         double p = (density - 1.)*csq;
         fprintf(
             file,
             "%e,%e,%e,%lf,%lf,%lf,%lf\n",
             (i - 0.5)*dx_ + Ox_, (j - 0.5)*dx_ + Oy_, 0.,
-            u*Cu_, v*Cu_, 0., p*Cpressure_
+            U[0]*Cu_, U[1]*Cu_, 0., p*Cpressure_
         );
     }}
     fclose(file);
 }
 
-void init(int imax, int jmax, double tau, Cumu **pcumu, PorousDisk **ppd) {
-    PorousDisk *pd = new PorousDisk(imax, jmax);
+void init(int2_t sz, double tau, Cumu **pcumu, PorousDisk **ppd) {
+    PorousDisk *pd = new PorousDisk(sz);
     pd->print_info();
     pd->output_dfunc("data/dfunc.csv");
 
-    Cumu *cumu = new Cumu(imax, jmax, 1./tau);
+    Cumu *cumu = new Cumu(sz, 1./tau);
     cumu->print_info();
 
     #pragma acc parallel loop independent \
-    present(cumu[0:1], cumu->shift[:imax*jmax], cumu->f[:imax*jmax]) \
-    firstprivate(imax, jmax)
-    for (int i = 0; i < imax*jmax; i ++) {
+    present(cumu[0:1], cumu->shift[:sz[0]*sz[1]], cumu->f[:sz[0]*sz[1]]) \
+    firstprivate(sz)
+    for (int i = 0; i < sz[0]*sz[1]; i ++) {
         double2_t shift{{0., 0.}};
+        double2_t velocity{{U, 0.}};
         double density = 1.;
-        double9_t ceq = get_eq_cumulant(U, 0., density);
+        double9_t ceq = get_eq_cumulant(velocity, density);
         cumu->shift[i] = shift;
         cumu->f[i] = cumulant_to_pdf(ceq, shift);
     }
@@ -576,32 +590,32 @@ void finalize(Cumu *cumu, PorousDisk *pd) {
 }
 
 void main_loop(Cumu *cumu, PorousDisk *pd) {
-    int imax = cumu->imax, jmax = cumu->jmax;    
+    int2_t sz = cumu->sz;
+    cpy_array(cumu->fprev, cumu->f, sz[0]*sz[1]);
 
-    cpy_array(cumu->fprev, cumu->f, imax*jmax);
+    compute_cumulant(cumu->f, cumu->shift, cumu->c, sz);
 
-    compute_cumulant(cumu->f, cumu->shift, cumu->c, imax, jmax);
+    do_collision(cumu->c, cumu->shift, cumu->cpost, cumu->omega, sz);
 
-    do_collision(cumu->c, cumu->shift, cumu->cpost, cumu->omega, imax, jmax);
+    compute_post_pdfs(cumu->cpost, cumu->shift, cumu->fpost, sz);
 
-    compute_post_pdfs(cumu->cpost, cumu->shift, cumu->fpost, imax, jmax);
+    do_streaming(cumu->fpost, cumu->f, sz);
 
-    do_streaming(cumu->fpost, cumu->f, imax, jmax);
+    apply_bc(cumu->f, cumu->fpost, cumu->fprev, cumu->shift, U, sz);
 
-    apply_bc(cumu->f, cumu->fpost, cumu->fprev, cumu->shift, U, imax, jmax);
-
-    compute_shift(cumu->f, pd->dfunc, cumu->shift, imax, jmax);
+    compute_shift(cumu->f, pd->dfunc, cumu->shift, sz);
 }
 
 int main() {
     std::string path = "data/o.csv";
 
-    int imax = Lx_*Cells_per_length + 2*Ghost_cell;
-    int jmax = Ly_*Cells_per_length + 2*Ghost_cell;
-
+    const int2_t sz{{
+        Lx_*Cells_per_length + 2*Ghost_cell,
+        Ly_*Cells_per_length + 2*Ghost_cell
+    }};
     Cumu *cumu;
     PorousDisk *pd;
-    init(imax, jmax, tau, &cumu, &pd);
+    init(sz, tau, &cumu, &pd);
 
     for (int step = 1; step <= Nt; step ++) {
         main_loop(cumu, pd);
