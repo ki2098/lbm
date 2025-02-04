@@ -5,11 +5,138 @@
 #include <chrono>
 #include <iostream>
 #include <fstream>
-
+#include "bts.h"
+#include "../util.h"
 #include "../vector_type.h"
+
+using namespace std;
+
 
 using double9_t = vector_t<double, 9>;
 using double2_t = vector_t<double, 2>;
+
+template<size_t N>
+class BtsHandler : public BtsReader {
+public:
+    float *curr, *next;
+    int step = - 1;
+    float ly, lz;
+
+    void print_info() {
+        BtsReader::print_info();
+    }
+
+    BtsHandler(string path) : BtsReader(path) {
+        if (N > nv) {
+            printf("BTS HANDLER ERROR: REQUIRING TOO MANY VARS!(%d > %d)\n", N, nv);
+        }
+        curr = new float[ny*nz*nv];
+        next = new float[ny*nz*nv];
+        ly = (ny - 1)*dy;
+        lz = (nz - 1)*dz;
+    }
+
+    ~BtsHandler() {
+        delete[] curr;
+        delete[] next;
+    }
+
+    void apply_inflow_with_interpolation(
+        vector_t<float, N> *inflow,
+        float dyin,
+        float dzin, 
+        float oyin,
+        float ozin,
+        int nyin,
+        int nzin,
+        double t,
+        double u_scale = 1.
+    ) {
+        if (step != int(t/dt)) {
+            step = int(t/dt);
+            load_to_array(curr, step);
+            load_to_array(next, step + 1);
+        }
+        for (int j = 0; j < nyin; j ++) {
+        for (int k = 0; k < nzin; k ++) {
+            float y = j*dyin + oyin;
+            float z = k*dzin + ozin;
+            int jfloor = int(y/dy);
+            int kfloor = int(z/dz);
+            for (int v = 0; v < N; v ++) {
+                float v0 = curr[btsid(jfloor, kfloor, v)];
+                float v1 = curr[btsid(jfloor + 1, kfloor, v)];
+                float v2 = curr[btsid(jfloor, kfloor + 1, v)];
+                float v3 = curr[btsid(jfloor + 1, kfloor + 1, v)];
+                float v_curr = bilinear_interpolate(
+                    v0, v1, v2, v3,
+                    jfloor*dy, (jfloor + 1)*dy, kfloor*dz, (kfloor + 1)*dz,
+                    y, z
+                );
+                v0 = next[btsid(jfloor, kfloor, v)];
+                v1 = next[btsid(jfloor + 1, kfloor, v)];
+                v2 = next[btsid(jfloor, kfloor + 1, v)];
+                v3 = next[btsid(jfloor + 1, kfloor + 1, v)];
+                float v_next = bilinear_interpolate(
+                    v0, v1, v2, v3,
+                    jfloor*dy, (jfloor + 1)*dy, kfloor*dz, (kfloor + 1)*dz,
+                    y, z
+                );
+                float at = (t - step*dt)/dt;
+                float v_now = (at*v_next + (1 - at)*v_curr)/u_scale;
+                inflow[j*nzin + k][v] = v_now;
+            }
+        }}
+    }
+};
+
+template<size_t N>
+class InflowHandler : public BtsHandler<N> {
+public:
+    vector_t<float, N> *inflow;
+    int ny, nz;
+    float dy, dz;
+    float oy, oz;
+    double u_scale;
+
+    InflowHandler(int ny, int nz, string path) : BtsHandler<N>(path), ny(ny), nz(nz), dy(dy), dz(dz){
+        dy = BtsHandler<N>::ly/ny;
+        dz = BtsHandler<N>::lz/nz;
+        float ly = (ny - 1)*dy;
+        float lz = (nz - 1)*dz;
+        if (ly >= BtsHandler<N>::ly || lz >= BtsHandler<N>::lz) {
+            printf("INFLOW SPACE RANGE ERROR: (%f %f) >= (%f %f)\n", ly, lz, BtsHandler<N>::ly, BtsHandler<N>::lz);
+        }
+
+        oy = 0.5*(BtsHandler<N>::ly - ly);
+        oz = 0.5*(BtsHandler<N>::lz - lz);
+
+        inflow = new vector_t<float, N>[ny*nz];
+
+        #pragma acc enter data \
+        copyin(this[0:1]) create(inflow[:ny*nz])
+    }
+
+    ~InflowHandler() {
+        delete[] inflow;
+
+        #pragma acc exit data \
+        delete(inflow[:ny*nz], this[0:1])
+    }
+
+    void apply_inflow(float t) {
+        BtsHandler<N>::apply_inflow_with_interpolation(
+            inflow,
+            dy, dz,
+            oy, oz,
+            ny, nz,
+            t,
+            u_scale
+        );
+        #pragma acc update \
+        device(inflow[:ny*nz])
+    }
+};
 
 const int Ve[9][2] = {
     {-1, -1},
@@ -431,7 +558,8 @@ void apply_bc(
     const double9_t *fpost,
     const double9_t *fprev,
     const double2_t *shift,
-    const double u_inlet,
+    InflowHandler<2> *inflow_handler,
+    const double t_realworld,
     const int nx,
     const int ny
 ) {
@@ -488,19 +616,23 @@ void apply_bc(
         }
     }
 
-    /** left fixed velocity inlet */
+    /** left time varying velocity inlet */
+    inflow_handler->apply_inflow(t_realworld);
+    vector_t<float, 2> *inflow = inflow_handler->inflow;
     #pragma acc parallel loop independent \
-    present(f[:nx*ny], fpost[:nx*ny], shift[:nx*ny], Ve, Wgt) \
-    firstprivate(nx, ny, u_inlet)
+    present(f[:nx*ny], fpost[:nx*ny], Wgt, Ve, inflow[:(ny - 2)]) \
+    firstprivate(nx, ny)
     for (int j = 1; j < ny - 1; j ++) {
         const int i = 1;
         const int l = i*ny + j;
         double u, v, density;
         get_macroscopic_val(f[l], shift[l], u, v, density);
+        double inflow_u = inflow[j + 1][0];
+        double inflow_v = inflow[j + 1][1];
         const int qlist[]{6, 7, 8};
         for (int q : qlist) {
             const int lnk = 8 - q;
-            f[l][q] = fpost[l][lnk] - 2*Wgt[lnk]*density*(Ve[lnk][0]*u_inlet)*csqi;
+            f[l][q] = fpost[l][lnk] - 2*Wgt[lnk]*density*(Ve[lnk][0]*inflow_u + Ve[lnk][1]*inflow_v)*csqi;
         }
     }
 }
@@ -547,7 +679,10 @@ void output(Cumu *cumu, std::string path) {
     fclose(file);
 }
 
-void init(int nx, int ny, double tau, Cumu **pcumu, PorousDisk **ppd) {
+void init(int nx, int ny, double tau, Cumu **pcumu, PorousDisk **ppd, InflowHandler<2> **pinflow) {
+    InflowHandler<2> *inflow = new InflowHandler<2>(ny - 2, 1, "TurbSim.bts");
+    inflow->print_info();
+
     PorousDisk *pd = new PorousDisk(nx, ny);
     pd->print_info();
     pd->output_dfunc("data/dfunc.csv");
@@ -561,58 +696,22 @@ void init(int nx, int ny, double tau, Cumu **pcumu, PorousDisk **ppd) {
     for (int i = 0; i < nx*ny; i ++) {
         double2_t shift{{0., 0.}};
         double density = 1.;
-        double9_t ceq = get_eq_cumulant(U, 0., density);
+        double9_t ceq = get_eq_cumulant(0., 0., density);
         cumu->shift[i] = shift;
         cumu->f[i] = cumulant_to_pdf(ceq, shift);
     }
 
     *pcumu = cumu;
     *ppd = pd;
+    *pinflow = inflow;
 }
 
-void finalize(Cumu *cumu, PorousDisk *pd) {
+void finalize(Cumu *cumu, PorousDisk *pd, InflowHandler<2> *inflow) {
     delete cumu;
     delete pd;
+    delete inflow;
 }
 
-void main_loop(Cumu *cumu, PorousDisk *pd) {
-    int nx = cumu->nx, ny = cumu->ny;    
-
-    cpy_array(cumu->fprev, cumu->f, nx*ny);
-
-    compute_cumulant(cumu->f, cumu->shift, cumu->c, nx, ny);
-
-    do_collision(cumu->c, cumu->shift, cumu->cpost, cumu->omega, nx, ny);
-
-    compute_post_pdfs(cumu->cpost, cumu->shift, cumu->fpost, nx, ny);
-
-    do_streaming(cumu->fpost, cumu->f, nx, ny);
-
-    apply_bc(cumu->f, cumu->fpost, cumu->fprev, cumu->shift, U, nx, ny);
-
-    compute_shift(cumu->f, pd->dfunc, cumu->shift, nx, ny);
-}
-
-int main() {
-    std::string path = "data/o.csv";
-
-    int nx = Lx_*Cells_per_length + 2*Ghost_cell;
-    int ny = Ly_*Cells_per_length + 2*Ghost_cell;
-
-    Cumu *cumu;
-    PorousDisk *pd;
-    init(nx, ny, tau, &cumu, &pd);
-
-    for (int step = 1; step <= Nt; step ++) {
-        main_loop(cumu, pd);
-        printf("\r%d/%d", step, Nt);
-        fflush(stdout);
-    }
-    printf("\n");
+void main_loop(Cumu *cumu, PorousDisk *pd, InflowHandler<2> *inflow) {
     
-    output(cumu, path);
-
-    finalize(cumu, pd);
-
-    return 0;
 }
