@@ -89,7 +89,7 @@ public:
     float oy, oz;
     double u_scale;
 
-    InflowHandler(int ny, int nz, string path) : BtsHandler<N>(path), ny(ny), nz(nz), dy(dy), dz(dz){
+    InflowHandler(int ny, int nz, string path) : BtsHandler<N>(path), ny(ny), nz(nz) {
         dy = BtsHandler<N>::ly/ny;
         dz = BtsHandler<N>::lz/nz;
         float ly = (ny - 1)*dy;
