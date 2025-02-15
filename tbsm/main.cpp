@@ -213,7 +213,7 @@ const double CRC = CRC_/Ccrc_;
 const double Diameter = Diameter_/Cl_;
 const double Thick = Thick_/Cl_;
 
-const double T_ = 1;
+const double T_ = 150;
 const int Nt = T_/dt_;
 
 template<typename T>
@@ -700,7 +700,7 @@ void init(int nx, int ny, double tau, Cumu **cumu_ptr, PorousDisk **pd_ptr, Infl
     for (int i = 0; i < nx*ny; i ++) {
         double2_t shift{{0., 0.}};
         double density = 1.;
-        double9_t ceq = get_eq_cumulant(U, 0., density);
+        double9_t ceq = get_eq_cumulant(0., 0., density);
         cumu->shift[i] = shift;
         cumu->f[i] = cumulant_to_pdf(ceq, shift);
     }
@@ -725,13 +725,15 @@ void main_loop(Cumu *cumu, PorousDisk *pd, InflowBoundary<2> *ibc, int step) {
     compute_post_pdfs(cumu->cpost, cumu->shift, cumu->fpost, nx, ny);
     do_streaming(cumu->fpost, cumu->f, nx, ny);
     apply_bc(cumu->f, cumu->fpost, cumu->fprev, cumu->shift, ibc, step*dt_, nx, ny);
-    // compute_shift(cumu->f, pd->dfunc, cumu->shift, nx, ny);
+    compute_shift(cumu->f, pd->dfunc, cumu->shift, nx, ny);
 }
 
 int main() {
     string path = "data/o.csv";
     int nx = Lx_*Cells_per_length + 2*Ghost_cell;
     int ny = Ly_*Cells_per_length + 2*Ghost_cell;
+    const int output_interval = int(1./dt_);
+    const int output_start = int(50./dt_);
     Cumu *cumu;
     PorousDisk *pd;
     InflowBoundary<2> *ibc;
@@ -740,9 +742,12 @@ int main() {
         main_loop(cumu, pd, ibc, step);
         printf("\r%d/%d", step, Nt);
         fflush(stdout);
+        if (step%output_interval == 0 && step >= output_start) {
+            output(cumu, path + "." + to_string((step - output_start)/output_interval));
+        }
     }
     printf("\n");
-    output(cumu, path);
+    // output(cumu, path);
     finalize(cumu, pd, ibc);
 
     return 0;
