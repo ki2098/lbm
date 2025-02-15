@@ -83,6 +83,9 @@ public:
 
     template<typename T>
     void load_to_array(T *ptr, int t) {
+        if (t >= ntime) {
+            printf("BTS READER ERROR: TIME OUT OF BOUND! %d > %d\n", t, ntime - 1);
+        }
         size_t skip = header + t*nv*(ny*nz + ntwr)*sizeof(int16_t);
         size_t len  = nv*ny*nz*sizeof(int16_t);
         ifs.seekg(skip, std::ios::beg);

@@ -13,6 +13,7 @@ struct vector_t {
     const T &operator[](int i) const {
         return m[i];
     }
+    
     std::string to_str() {
         std::string str = "(";
         if (N == 0) {
