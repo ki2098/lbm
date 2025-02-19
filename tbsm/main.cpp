@@ -690,11 +690,12 @@ class TimeAvg {
 public:
     int nx, ny, gc;
     double dx, dy;
+    double ox, oy;
     double u_scale;
     int count;
     double2_t *U;
 
-    TimeAvg(int nx, int ny, int gc, double dx, double dy, double u_scale) : nx(nx), ny(ny), gc(gc), dx(dx), dy(dy), u_scale(u_scale), count(0) {
+    TimeAvg(int nx, int ny, int gc, double dx, double dy, double ox, double oy, double u_scale) : nx(nx), ny(ny), gc(gc), dx(dx), dy(dy), ox(ox), oy(oy), u_scale(u_scale), count(0) {
         U = new double2_t[nx*ny];
 
         #pragma acc enter data \
@@ -733,8 +734,8 @@ public:
         for (int j = gc; j < ny - gc; j ++) {
         for (int i = gc; i < nx - gc; i ++) {
             int id = i*ny + j;
-            double x = (i - gc + 0.5)*dx;
-            double y = (j - gc + 0.5)*dx;
+            double x = (i - gc + 0.5)*dx + ox;
+            double y = (j - gc + 0.5)*dx + oy;
             fprintf(file, "%lf,%lf,%lf,%lf,%lf,%lf\n", x, y, 0.0, U[id][0]*u_scale, U[id][1]*u_scale, 0.0);
         }}
     }
@@ -764,7 +765,7 @@ void init(int nx, int ny, double tau, Cumu **cumu_ptr, PorousDisk **pd_ptr, Infl
     ibc->print_info();
     *ibc_ptr = ibc;
 
-    TimeAvg *tavg = new TimeAvg(nx, ny, 1, dx_, dx_, Cu_);
+    TimeAvg *tavg = new TimeAvg(nx, ny, 1, dx_, dx_, Ox_, Oy_, Cu_);
     *tavg_ptr = tavg;
 }
 
