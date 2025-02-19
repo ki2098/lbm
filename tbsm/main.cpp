@@ -686,7 +686,61 @@ void output(Cumu *cumu, std::string path) {
     fclose(file);
 }
 
-void init(int nx, int ny, double tau, Cumu **cumu_ptr, PorousDisk **pd_ptr, InflowBoundary<2> **ibc_ptr) {
+class TimeAvg {
+public:
+    int nx, ny, gc;
+    double dx, dy;
+    double u_scale;
+    int count;
+    double2_t *U;
+
+    TimeAvg(int nx, int ny, int gc, double dx, double dy, double u_scale) : nx(nx), ny(ny), gc(gc), dx(dx), dy(dy), u_scale(u_scale), count(0) {
+        U = new double2_t[nx*ny];
+
+        #pragma acc enter data \
+        copyin(this[0:1]) create(U[:nx*ny])
+    }
+
+    ~TimeAvg() {
+        delete[] U;
+
+        #pragma acc exit data \
+        delete(this[0:1], U[:nx*ny])
+    }
+
+    void calc_tavg(double9_t *f, double2_t *shift) {
+        count ++;
+        #pragma acc update \
+        device(count)
+        #pragma acc parallel loop independent \
+        present(this[0:1], U[:nx*ny], f[:nx*ny], shift[:nx*ny])
+        for (int i = 0; i < nx*ny; i ++) {
+            double u, v, density;
+            get_macroscopic_val(f[i], shift[i], u, v, density);
+            double a = 1./count;
+            U[i][0] = (1. - a)*U[i][0] + a*u;
+            U[i][1] = (1. - a)*U[i][1] + a*v;
+            // if (i == 0) printf(" %d\n", count);
+        }
+    }
+
+    void output(string path) {
+        #pragma acc update \
+        host(U[:nx*ny])
+
+        FILE *file = fopen(path.c_str(), "w");
+        fprintf(file, "x,y,z,u,v,w\n");
+        for (int j = gc; j < ny - gc; j ++) {
+        for (int i = gc; i < nx - gc; i ++) {
+            int id = i*ny + j;
+            double x = (i - gc + 0.5)*dx;
+            double y = (j - gc + 0.5)*dx;
+            fprintf(file, "%lf,%lf,%lf,%lf,%lf,%lf\n", x, y, 0.0, U[id][0]*u_scale, U[id][1]*u_scale, 0.0);
+        }}
+    }
+};
+
+void init(int nx, int ny, double tau, Cumu **cumu_ptr, PorousDisk **pd_ptr, InflowBoundary<2> **ibc_ptr, TimeAvg **tavg_ptr) {
     PorousDisk *pd = new PorousDisk(nx, ny);
     pd->print_info();
     pd->output_dfunc("data/dfunc.csv");
@@ -709,15 +763,19 @@ void init(int nx, int ny, double tau, Cumu **cumu_ptr, PorousDisk **pd_ptr, Infl
     auto ibc = new InflowBoundary<2>(ny, 1, U, "TurbSim.bts");
     ibc->print_info();
     *ibc_ptr = ibc;
+
+    TimeAvg *tavg = new TimeAvg(nx, ny, 1, dx_, dx_, Cu_);
+    *tavg_ptr = tavg;
 }
 
-void finalize(Cumu *cumu, PorousDisk *pd, InflowBoundary<2> *ibc) {
+void finalize(Cumu *cumu, PorousDisk *pd, InflowBoundary<2> *ibc, TimeAvg *tavg) {
        delete cumu;
        delete pd;
        delete ibc;
+       delete tavg;
 }
 
-void main_loop(Cumu *cumu, PorousDisk *pd, InflowBoundary<2> *ibc, int step) {
+void main_loop(Cumu *cumu, PorousDisk *pd, InflowBoundary<2> *ibc, TimeAvg *tavg, int step) {
     int nx = cumu->nx, ny = cumu->ny;
     cpy_array(cumu->fprev, cumu->f, nx*ny);
     compute_cumulant(cumu->f, cumu->shift, cumu->c, nx, ny);
@@ -726,6 +784,7 @@ void main_loop(Cumu *cumu, PorousDisk *pd, InflowBoundary<2> *ibc, int step) {
     do_streaming(cumu->fpost, cumu->f, nx, ny);
     apply_bc(cumu->f, cumu->fpost, cumu->fprev, cumu->shift, ibc, step*dt_, nx, ny);
     compute_shift(cumu->f, pd->dfunc, cumu->shift, nx, ny);
+    tavg->calc_tavg(cumu->f, cumu->shift);
 }
 
 int main() {
@@ -737,9 +796,10 @@ int main() {
     Cumu *cumu;
     PorousDisk *pd;
     InflowBoundary<2> *ibc;
-    init(nx, ny, tau, &cumu, &pd, &ibc);
+    TimeAvg *tavg;
+    init(nx, ny, tau, &cumu, &pd, &ibc, &tavg);
     for (int step = 1; step <= Nt; step ++) {
-        main_loop(cumu, pd, ibc, step);
+        main_loop(cumu, pd, ibc, tavg, step);
         printf("\r%d/%d", step, Nt);
         fflush(stdout);
         if (step%output_interval == 0 && step >= output_start) {
@@ -748,7 +808,8 @@ int main() {
     }
     printf("\n");
     // output(cumu, path);
-    finalize(cumu, pd, ibc);
+    tavg->output("data/tavg.csv");
+    finalize(cumu, pd, ibc, tavg);
 
     return 0;
 }
