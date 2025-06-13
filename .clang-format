@@ -4,3 +4,4 @@ BreakBeforeBraces: Attach
 IndentWidth: 4
 TabWidth: 4
 BreakTemplateDeclarations: Yes
+AccessModifierOffset: -4

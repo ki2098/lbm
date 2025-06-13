@@ -427,9 +427,9 @@ void pdf_to_cumulant(double f[Q], double c[Q]) {
 
 void cumulant_to_pdf(double c[Q], double shift[D], double f[Q]) {
     double m[Q], k[Q], U[D];
-    U[0] = c[_100]/c[_000];
-    U[1] = c[_010]/c[_000];
-    U[2] = c[_001]/c[_000];
+    U[0] = c[_100] / c[_000];
+    U[1] = c[_010] / c[_000];
+    U[2] = c[_001] / c[_000];
     cumulant_to_central_moment(c, shift, k);
     central_moment_to_raw_moment(k, U, m);
     raw_moment_to_pdf(m, f);
@@ -582,7 +582,8 @@ void copy_array(T src[][N], T dst[][N], int len) {
 }
 
 class Cumu {
-    double (*f)[Q], (*f_post)[Q], (*c)[Q], (*c_post)[Q];
+public:
+    double (*f)[Q], (*f_post)[Q], (*c)[Q], (*c_post)[Q], (*shift)[D];
     int size[D];
     double tau;
 
@@ -590,11 +591,11 @@ class Cumu {
         copy_array(size, this->size, 3);
         this->tau = tau;
 
-        int len = size[0]*size[1]*size[2];
-        f = new double[len][Q];
-        f_post = new double[len][Q];
-        c = new double[len][Q];
-        c_post = new double[len][Q];
+        int len = size[0] * size[1] * size[2];
+        f = new double[len][Q]();
+        f_post = new double[len][Q]();
+        c = new double[len][Q]();
+        c_post = new double[len][Q]();
     }
 
     ~Cumu() {
@@ -604,3 +605,24 @@ class Cumu {
         delete[] c_post;
     }
 };
+
+Cumu *init(int size[D], double tau) {
+    Cumu *cumu = new Cumu(size, tau);
+    int len = size[0]*size[1]*size[2];
+    for (int i = 0; i < len; i ++) {
+        double shift[] = {0, 0, 0};
+        double rho = 1;
+        double U[] = {0, 0, 0};
+        double ceq[Q];
+        get_eq_cumulant(rho, U, ceq);
+        copy_array(shift, cumu->shift[i], Q);
+        cumulant_to_pdf(ceq, shift, cumu->f[i]);
+    }
+
+    return cumu;
+}
+
+void finalize(Cumu *cumu) {
+    delete cumu;
+}
+

@@ -738,6 +738,7 @@ public:
             double y = (j - gc + 0.5)*dx + oy;
             fprintf(file, "%lf,%lf,%lf,%lf,%lf,%lf\n", x, y, 0.0, U[id][0]*u_scale, U[id][1]*u_scale, 0.0);
         }}
+        fclose(file);
     }
 };
 
