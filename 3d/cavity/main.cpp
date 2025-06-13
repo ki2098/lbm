@@ -14,14 +14,14 @@ T sq(T a) {
 }
 
 template <typename T>
-void copy_array(T src[], T dst[], int len) {
+void copy_array(const T src[], T dst[], const int len) {
     for (int i = 0; i < len; i++) {
         dst[i] = src[i];
     }
 }
 
 template <typename T, int N>
-void copy_array(T src[][N], T dst[][N], int len) {
+void copy_array(const T src[][N], T dst[][N], const int len) {
     for (int i = 0; i < len; i++) {
         for (int j = 0; j < N; j++) {
             dst[i][j] = src[i][j];
@@ -96,6 +96,36 @@ const double U = 0.1;
 
 const double csqi = 3;
 const double csq = 1. / csqi;
+
+struct Cumu {
+    double (*f)[Q], (*ft)[Q], (*c)[Q], (*ct)[Q], (*shift)[D];
+    int size[D];
+    double omega;
+
+    Cumu(const int size[D], const double omega) {
+        int len = size[0]*size[1]*size[2];
+        copy_array(size, this->size, D);
+        this->omega = omega;
+        f = new double[len][Q]();
+        ft = new double[len][Q]();
+        c = new double[len][Q]();
+        ct = new double[len][Q]();
+    }
+
+    ~Cumu() {
+        delete[] f;
+        delete[] ft;
+        delete[] c;
+        delete[] ct;
+    }
+
+    void print_info() {
+        printf("CUMULANT LBM\n");
+        printf("\tdomain size = (%d %d %d)\n", size[0], size[1], size[2]);
+        printf("\tguide cell = %d\n", gc);
+        printf("\trelaxation rate = %ld\n", omega);
+    }
+};
 
 const int Vel[Q][D] = {
     {-1, -1, -1}, {-1, -1, 0}, {-1, -1, 1}, {-1, 0, -1}, {-1, 0, 0}, {-1, 0, 1}, {-1, 1, -1}, {-1, 1, 0}, {-1, 1, 1},
