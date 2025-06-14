@@ -199,7 +199,7 @@ const double csq = 1./csqi;
 const double tau = nu*csqi + 0.5;
 const double omega = 1/tau;
 const double Re_lattice = U*dx/nu;
-const double CFL = U_*dt_/dx_;
+const double Cfl = U_*dt_/dx_;
 const double Cpressure_ = 1.*Cu_*Cu_;
 
 const double CRC_ = 13;

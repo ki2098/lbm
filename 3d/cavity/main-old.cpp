@@ -35,7 +35,7 @@ int get_link_q(int q) {
 }
 
 const double CSQI = 3;
-const double CSQ = 1/CSQI;
+const double Csq = 1/CSQI;
 
 const int _lll = 0;
 const int _llo = 1;
@@ -112,9 +112,9 @@ void get_eq_cumulant(double rho, double U[D], double ceq[Q]) {
     ceq[_100] = rho * U[0];
     ceq[_010] = rho * U[1];
     ceq[_001] = rho * U[2];
-    ceq[_200] = CSQ * rho;
-    ceq[_020] = CSQ * rho;
-    ceq[_002] = CSQ * rho;
+    ceq[_200] = Csq * rho;
+    ceq[_020] = Csq * rho;
+    ceq[_002] = Csq * rho;
     ceq[_110] = 0;
     ceq[_101] = 0;
     ceq[_011] = 0;
