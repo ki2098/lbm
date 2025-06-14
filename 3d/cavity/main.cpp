@@ -88,14 +88,28 @@ const int _222 = 26;
 const int D = 3;
 const int Q = 27;
 
-const int gc = 1;
-
-const double L_ = 1;
-const double U_ = 1;
-const double U = 0.1;
-
-const double csqi = 3;
-const double csq = 1. / csqi;
+const double CsqI = 3;
+const double Csq = 1. / CsqI;
+const double Re = 100;
+const int GhostLattice = 1;
+const double CavityL_ = 1;
+const double LidU_ = 1;
+const double LidU = 0.1;
+const double CharU_ = LidU_ / LidU;
+const int LatticesPerL = 32;
+const double LatticeL_ = 1. / LatticesPerL;
+const double LatticeL = 1;
+const double CharL_ = LatticeL_ / LatticeL;
+const double CharNu_ = CharL_ * CharU_;
+const double Nu_ = CavityL_ * LidU_ / Re;
+const double Nu = Nu_ / CharNu_;
+const double Tau = Nu * CsqI + 0.5;
+const double LatticeRe = LidU * LatticeL / Nu;
+const double Dt = 1;
+const double CharT_ = CharL_ / CharU_;
+const double Dt_ = Dt * CharT_;
+const double Cfl = LidU_ * Dt_ / LatticeL_;
+const double CharP_ = CharU_ * CharU_;
 
 struct Cumu {
     double (*f)[Q], (*ft)[Q], (*c)[Q], (*ct)[Q], (*shift)[D];
@@ -103,7 +117,7 @@ struct Cumu {
     double omega;
 
     Cumu(const int size[D], const double omega) {
-        int len = size[0]*size[1]*size[2];
+        int len = size[0] * size[1] * size[2];
         copy_array(size, this->size, D);
         this->omega = omega;
         f = new double[len][Q]();
@@ -122,7 +136,7 @@ struct Cumu {
     void print_info() {
         printf("CUMULANT LBM\n");
         printf("\tdomain size = (%d %d %d)\n", size[0], size[1], size[2]);
-        printf("\tguide cell = %d\n", gc);
+        printf("\tguide lattice = %d\n", GhostLattice);
         printf("\trelaxation rate = %ld\n", omega);
     }
 };
@@ -169,9 +183,9 @@ void get_eq_cumulant(const double U[D], const double rho, double c[Q]) {
     c[_100] = rho * U[0];
     c[_010] = rho * U[1];
     c[_001] = rho * U[2];
-    c[_200] = rho * csq;
-    c[_020] = rho * csq;
-    c[_002] = rho * csq;
+    c[_200] = rho * Csq;
+    c[_020] = rho * Csq;
+    c[_002] = rho * Csq;
     c[_110] = 0;
     c[_101] = 0;
     c[_011] = 0;
@@ -553,9 +567,9 @@ void compute_post_collision_pdf(const double c[][Q], const double shift[][D], do
 }
 
 void apply_streaming(const double ft[][Q], double f[][Q], const int size[D]) {
-    for (int i = gc; i < size[0] - gc; i++) {
-        for (int j = gc; j < size[1] - gc; j++) {
-            for (int k = gc; k < size[2] - gc; k++) {
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+            for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
                 for (int q = 0; q < Q; q++) {
                     int sid = index(i - Vel[q][0], j - Vel[q][1], k - Vel[q][2], size);
                     int did = index(i, j, k, size);
@@ -568,9 +582,9 @@ void apply_streaming(const double ft[][Q], double f[][Q], const int size[D]) {
 
 void apply_boundary_condition(const double ft[][Q], const double ulid, double f[][Q], const int size[D]) {
     // bottom wall
-    for (int i = gc; i < size[0] - gc; i++) {
-        for (int j = gc; j < size[1] - gc; j++) {
-            int id = index(i, j, gc, size);
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+            int id = index(i, j, GhostLattice, size);
             int qlist[] = {_LLR, _LOR, _LRR, _OLR, _OOR, _ORR, _RLR, _ROR, _RRR};
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
@@ -578,20 +592,20 @@ void apply_boundary_condition(const double ft[][Q], const double ulid, double f[
         }
     }
     // top moving wall
-    for (int i = gc; i < size[0] - gc; i++) {
-        for (int j = gc; j < size[1] - gc; j++) {
-            int id = index(i, j, size[2] - gc - 1, size);
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+            int id = index(i, j, size[2] - GhostLattice - 1, size);
             int qlist[] = {_LLL, _LOL, _LRL, _OLL, _OOL, _ORL, _RLL, _ROL, _RRL};
             for (auto q : qlist) {
                 int lq = link(q);
-                f[id][q] = ft[id][lq] - Vel[lq][0] * 2 * ulid * Wght[lq] * csqi;
+                f[id][q] = ft[id][lq] - Vel[lq][0] * 2 * ulid * Wght[lq] * CsqI;
             }
         }
     }
     // left wall
-    for (int j = gc; j < size[1] - gc; j++) {
-        for (int k = gc; k < size[2] - gc; k++) {
-            int id = index(gc, j, k, size);
+    for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+        for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
+            int id = index(GhostLattice, j, k, size);
             int qlist[] = {_RLL, _RLO, _RLR, _ROL, _ROO, _ROR, _RRL, _RRO, _RRR};
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
@@ -599,9 +613,9 @@ void apply_boundary_condition(const double ft[][Q], const double ulid, double f[
         }
     }
     // right wall
-    for (int j = gc; j < size[1] - gc; j++) {
-        for (int k = gc; k < size[2] - gc; k++) {
-            int id = index(size[0] - gc - 1, j, k, size);
+    for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+        for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
+            int id = index(size[0] - GhostLattice - 1, j, k, size);
             int qlist[] = {_LLL, _LLO, _LLR, _LOL, _LOO, _LOR, _LRL, _LRO, _LRR};
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
@@ -609,9 +623,9 @@ void apply_boundary_condition(const double ft[][Q], const double ulid, double f[
         }
     }
     // back wall
-    for (int i = gc; i < size[0] - gc; i++) {
-        for (int k = gc; k < size[2] - gc; k++) {
-            int id = index(i, gc, k, size);
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
+            int id = index(i, GhostLattice, k, size);
             int qlist[] = {_LRL, _LRO, _LRR, _ORL, _ORO, _ORR, _RRL, _RRO, _RRR};
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
@@ -619,9 +633,9 @@ void apply_boundary_condition(const double ft[][Q], const double ulid, double f[
         }
     }
     // front wall
-    for (int i = gc; i < size[0] - gc; i++) {
-        for (int k = gc; k < size[2] - gc; k++) {
-            int id = index(i, size[1] - gc - 1, k, size);
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
+            int id = index(i, size[1] - GhostLattice - 1, k, size);
             int qlist[] = {_LLL, _LLO, _LLR, _OLL, _OLO, _OLR, _RLL, _RLO, _RLR};
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
