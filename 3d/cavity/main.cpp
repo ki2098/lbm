@@ -8,6 +8,7 @@
 
 using namespace std;
 
+#pragma acc routine seq
 template <typename T>
 T sq(T a) {
     return a * a;
@@ -15,6 +16,7 @@ T sq(T a) {
 
 template <typename T>
 void copy_array(const T src[], T dst[], const int n) {
+#pragma acc kernels loop independent present(src[:n], dst[:n])
     for (int i = 0; i < n; i++) {
         dst[i] = src[i];
     }
@@ -22,6 +24,7 @@ void copy_array(const T src[], T dst[], const int n) {
 
 template <typename T, int N>
 void copy_array(const T src[][N], T dst[][N], const int n) {
+#pragma acc kernels loop independent present(src[:n], dst[:n])
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < N; j++) {
             dst[i][j] = src[i][j];
@@ -90,13 +93,13 @@ const int Q = 27;
 
 const double CsqI = 3;
 const double Csq = 1. / CsqI;
-const double Re = 100;
+const double Re = 5000;
 const int GhostLattice = 1;
 const double CavityL_ = 1;
 const double LidU_ = 1;
-const double LidU = 0.1;
+const double LidU = 0.05;
 const double CharU_ = LidU_ / LidU;
-const int LatticesPerL = 32;
+const int LatticesPerL = 128;
 const double LatticeL_ = 1. / LatticesPerL;
 const double LatticeL = 1;
 const double CharL_ = LatticeL_ / LatticeL;
@@ -111,6 +114,9 @@ const double Dt_ = Dt * CharT_;
 const double Cfl = LidU_ * Dt_ / LatticeL_;
 const double CharP_ = CharU_ * CharU_;
 
+const double MaxTime_ = 100;
+const int MaxStep = MaxTime_ / Dt_;
+
 struct Cumu {
     double (*f)[Q], (*ft)[Q], (*c)[Q], (*ct)[Q], (*shift)[D];
     int size[D];
@@ -118,19 +124,27 @@ struct Cumu {
 
     Cumu(const int size[D], const double omega) {
         int n = size[0] * size[1] * size[2];
-        copy_array(size, this->size, D);
+        this->size[0] = size[0];
+        this->size[1] = size[1];
+        this->size[2] = size[2];
         this->omega = omega;
         f = new double[n][Q]();
         ft = new double[n][Q]();
         c = new double[n][Q]();
         ct = new double[n][Q]();
+        shift = new double[n][D]();
+#pragma acc enter data copyin(this[0 : 1], f[ : n], ft[ : n], c[ : n], ct[ : n], shift[ : n])
     }
 
     ~Cumu() {
+        int n = size[0] * size[1] * size[2];
+#pragma acc exit data delete (this[0 : 1], f[ : n], ft[ : n], c[ : n], ct[ : n], shift[ : n])
+
         delete[] f;
         delete[] ft;
         delete[] c;
         delete[] ct;
+        delete[] shift;
     }
 
     void print_info() {
@@ -146,21 +160,26 @@ const int Vel[Q][D] = {
     {0, -1, -1},  {0, -1, 0},  {0, -1, 1},  {0, 0, -1},  {0, 0, 0},  {0, 0, 1},  {0, 1, -1},  {0, 1, 0},  {0, 1, 1},
     {1, -1, -1},  {1, -1, 0},  {1, -1, 1},  {1, 0, -1},  {1, 0, 0},  {1, 0, 1},  {1, 1, -1},  {1, 1, 0},  {1, 1, 1},
 };
+#pragma acc declare copyin(Vel)
 
 const double Wght[Q] = {
     1. / 216., 1. / 54., 1. / 216., 1. / 54., 2. / 27., 1. / 54., 1. / 216., 1. / 54., 1. / 216.,
     1. / 54.,  2. / 27., 1. / 54.,  2. / 27., 8. / 27., 2. / 27., 1. / 54.,  2. / 27., 1. / 54.,
     1. / 216., 1. / 54., 1. / 216., 1. / 54., 2. / 27., 1. / 54., 1. / 216., 1. / 54., 1. / 216.,
 };
+#pragma acc declare copyin(Wght)
 
+#pragma acc routine seq
 int index(const int i, const int j, const int k, const int size[D]) {
     return i * size[1] * size[2] + j * size[2] + k;
 }
 
+#pragma acc routine seq
 int link(const int q) {
     return (Q - 1) - q;
 }
 
+#pragma acc routine seq
 void pdf_to_macroscopic(const double f[Q], const double shift[D], double U[D], double &rho) {
     double m000 = 0;
     double m100 = 0;
@@ -178,6 +197,7 @@ void pdf_to_macroscopic(const double f[Q], const double shift[D], double U[D], d
     U[2] = (m001 + shift[2]) / m000;
 }
 
+#pragma acc routine seq
 void get_eq_cumulant(const double U[D], const double rho, double c[Q]) {
     c[_000] = rho;
     c[_100] = rho * U[0];
@@ -208,6 +228,7 @@ void get_eq_cumulant(const double U[D], const double rho, double c[Q]) {
     c[_222] = 0;
 }
 
+#pragma acc routine seq
 void pdf_to_raw_moment(const double f[Q], double m[Q]) {
     m[_000] = f[_LLL] + f[_LLO] + f[_LLR] + f[_LOL] + f[_LOO] + f[_LOR] + f[_LRL] + f[_LRO] + f[_LRR] + f[_OLL] +
               f[_OLO] + f[_OLR] + f[_OOL] + f[_OOO] + f[_OOR] + f[_ORL] + f[_ORO] + f[_ORR] + f[_RLL] + f[_RLO] +
@@ -258,6 +279,7 @@ void pdf_to_raw_moment(const double f[Q], double m[Q]) {
     m[_222] = f[_LLL] + f[_LLR] + f[_LRL] + f[_LRR] + f[_RLL] + f[_RLR] + f[_RRL] + f[_RRR];
 }
 
+#pragma acc routine seq
 void raw_moment_to_pdf(const double m[Q], double f[Q]) {
     f[_LLL] = -0.125 * (m[_111] - m[_112] - m[_121] + m[_122] - m[_211] + m[_212] + m[_221] - m[_222]);
     f[_LLO] = 0.25 * (m[_110] - m[_112] - m[_120] + m[_122] - m[_210] + m[_212] + m[_220] - m[_222]);
@@ -288,6 +310,7 @@ void raw_moment_to_pdf(const double m[Q], double f[Q]) {
     f[_RRR] = 0.125 * (m[_111] + m[_112] + m[_121] + m[_122] + m[_211] + m[_212] + m[_221] + m[_222]);
 }
 
+#pragma acc routine seq
 void raw_moment_to_central_moment(const double m[Q], const double U[D], double k[Q]) {
     double u = U[0];
     double v = U[1];
@@ -348,6 +371,7 @@ void raw_moment_to_central_moment(const double m[Q], const double U[D], double k
               v2 * (m[_200] * w2 - 2 * m[_201] * w + m[_202]) - 2 * v * (m[_210] * w2 - 2 * m[_211] * w + m[_212]);
 }
 
+#pragma acc routine seq
 void central_moment_to_raw_moment(const double k[Q], const double U[D], double m[Q]) {
     double u = U[0];
     double v = U[1];
@@ -408,6 +432,7 @@ void central_moment_to_raw_moment(const double k[Q], const double U[D], double m
               v2 * (k[_200] * w2 + 2 * k[_201] * w + k[_202]) + 2 * v * (k[_210] * w2 + 2 * k[_211] * w + k[_212]);
 }
 
+#pragma acc routine seq
 void central_moment_to_cumulant(const double k[Q], const double U[D], double c[Q]) {
     double rho = k[_000];
     c[_000] = rho;
@@ -453,6 +478,7 @@ void central_moment_to_cumulant(const double k[Q], const double U[D], double c[Q
                   sq(rho);
 }
 
+#pragma acc routine seq
 void cumulant_to_central_moment(const double c[Q], const double shift[D], double k[Q]) {
     double rho = c[_000];
     k[_000] = rho;
@@ -491,13 +517,14 @@ void cumulant_to_central_moment(const double c[Q], const double shift[D], double
               (4 * sq(k[_111]) + k[_200] * k[_022] + k[_020] * k[_202] + k[_002] * k[_220] +
                4 * (k[_011] * k[_211] + k[_101] * k[_121] + k[_110] * k[_112]) +
                2 * (k[_120] * k[_102] + k[_210] * k[_012] + k[_201] * k[_021])) /
-                  rho +
+                  rho -
               (16 * k[_110] * k[_101] * k[_011] +
                4 * (sq(k[_101]) * k[_020] + sq(k[_011]) * k[_200] + sq(k[_110]) * k[_002]) +
                2 * k[_200] * k[_020] * k[_002]) /
                   sq(rho);
 }
 
+#pragma acc routine seq
 void pdf_to_cumulant(const double f[Q], const double shift[D], double c[Q]) {
     double U[D], rho, m[Q], k[Q];
     pdf_to_macroscopic(f, shift, U, rho);
@@ -506,6 +533,7 @@ void pdf_to_cumulant(const double f[Q], const double shift[D], double c[Q]) {
     central_moment_to_cumulant(k, U, c);
 }
 
+#pragma acc routine seq
 void cumulant_to_pdf(const double c[Q], const double shift[D], double f[Q]) {
     double U[] = {c[_100] / c[_000], c[_010] / c[_000], c[_001] / c[_000]};
     double m[Q], k[Q];
@@ -514,6 +542,7 @@ void cumulant_to_pdf(const double c[Q], const double shift[D], double f[Q]) {
     raw_moment_to_pdf(m, f);
 }
 
+#pragma acc routine seq
 void relax_cumulant(const double c[Q], const double omega, double ct[Q]) {
     double rho = c[_000];
     ct[_000] = rho;
@@ -547,6 +576,7 @@ void relax_cumulant(const double c[Q], const double omega, double ct[Q]) {
 
 void compute_pre_collision_cumulant(const double f[][Q], const double shift[][D], double c[][Q], const int size[D]) {
     int n = size[0] * size[1] * size[2];
+#pragma acc kernels loop independent present(f[ : n], shift[ : n], c[ : n], Vel) copyin(size[ : D])
     for (int i = 0; i < n; i++) {
         pdf_to_cumulant(f[i], shift[i], c[i]);
     }
@@ -554,6 +584,7 @@ void compute_pre_collision_cumulant(const double f[][Q], const double shift[][D]
 
 void apply_collision(const double c[][Q], const double omega, double ct[][Q], const int size[D]) {
     int n = size[0] * size[1] * size[2];
+#pragma acc kernels loop independent present(c[ : n], ct[ : n]) copyin(size[ : D])
     for (int i = 0; i < n; i++) {
         relax_cumulant(c[i], omega, ct[i]);
     }
@@ -561,82 +592,98 @@ void apply_collision(const double c[][Q], const double omega, double ct[][Q], co
 
 void compute_post_collision_pdf(const double c[][Q], const double shift[][D], double f[][Q], const int size[D]) {
     int n = size[0] * size[1] * size[2];
+#pragma acc kernels loop independent present(c[ : n], shift[ : n], f[ : n]) copyin(size[ : D])
     for (int i = 0; i < n; i++) {
         cumulant_to_pdf(c[i], shift[i], f[i]);
     }
 }
 
 void apply_streaming(const double ft[][Q], double f[][Q], const int size[D]) {
+    int n = size[0] * size[1] * size[2];
+#pragma acc kernels loop independent collapse(4) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
         for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
             for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
                 for (int q = 0; q < Q; q++) {
-                    int sid = index(i - Vel[q][0], j - Vel[q][1], k - Vel[q][2], size);
-                    int did = index(i, j, k, size);
-                    f[did][q] = ft[sid][q];
+                    int src = index(i - Vel[q][0], j - Vel[q][1], k - Vel[q][2], size);
+                    int dst = index(i, j, k, size);
+                    f[dst][q] = ft[src][q];
                 }
             }
         }
     }
 }
 
-void apply_boundary_condition(const double ft[][Q], const double ulid, double f[][Q], const int size[D]) {
+void apply_boundary_condition(const double ft[][Q], const double lid_u, double f[][Q], const int size[D]) {
+    int n = size[0] * size[1] * size[2];
     // bottom wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
         for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
             int id = index(i, j, GhostLattice, size);
             int qlist[] = {_LLR, _LOR, _LRR, _OLR, _OOR, _ORR, _RLR, _ROR, _RRR};
+#pragma acc loop seq
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
             }
         }
     }
     // top moving wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n], Vel, Wght) copyin(size[ : D])
     for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
         for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
             int id = index(i, j, size[2] - GhostLattice - 1, size);
             int qlist[] = {_LLL, _LOL, _LRL, _OLL, _OOL, _ORL, _RLL, _ROL, _RRL};
+#pragma acc loop seq
             for (auto q : qlist) {
                 int lq = link(q);
-                f[id][q] = ft[id][lq] - Vel[lq][0] * 2 * ulid * Wght[lq] * CsqI;
+                f[id][q] = ft[id][lq] - 2 * Wght[lq] * Vel[lq][0] * lid_u * CsqI;
             }
         }
     }
     // left wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
         for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
             int id = index(GhostLattice, j, k, size);
             int qlist[] = {_RLL, _RLO, _RLR, _ROL, _ROO, _ROR, _RRL, _RRO, _RRR};
+#pragma acc loop seq
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
             }
         }
     }
     // right wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
         for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
             int id = index(size[0] - GhostLattice - 1, j, k, size);
             int qlist[] = {_LLL, _LLO, _LLR, _LOL, _LOO, _LOR, _LRL, _LRO, _LRR};
+#pragma acc loop seq
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
             }
         }
     }
     // back wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
         for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
             int id = index(i, GhostLattice, k, size);
             int qlist[] = {_LRL, _LRO, _LRR, _ORL, _ORO, _ORR, _RRL, _RRO, _RRR};
+#pragma acc loop seq
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
             }
         }
     }
     // front wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
         for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
             int id = index(i, size[1] - GhostLattice - 1, k, size);
             int qlist[] = {_LLL, _LLO, _LLR, _OLL, _OLO, _OLR, _RLL, _RLO, _RLR};
+#pragma acc loop seq
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
             }
@@ -644,14 +691,64 @@ void apply_boundary_condition(const double ft[][Q], const double ulid, double f[
     }
 }
 
-Cumu *init(int size[D], int omega) {
+Cumu *init(const int size[D], const double omega) {
     Cumu *cumu = new Cumu(size, omega);
-    int n = size[0]*size[1]*size[2];
-    for (int i = 0; i < n; i ++) {
+    int n = size[0] * size[1] * size[2];
+#pragma acc kernels loop independent present(cumu[0 : 1], cumu->c[ : n], cumu->shift[ : n], cumu->f[ : n])
+    for (int i = 0; i < n; i++) {
         double U[] = {0, 0, 0};
         double rho = 1;
         get_eq_cumulant(U, rho, cumu->c[i]);
         cumulant_to_pdf(cumu->c[i], cumu->shift[i], cumu->f[i]);
     }
     return cumu;
+}
+
+void finalize(Cumu *cumu) {
+    delete cumu;
+}
+
+void main_loop(Cumu *cumu) {
+    compute_pre_collision_cumulant(cumu->f, cumu->shift, cumu->c, cumu->size);
+    apply_collision(cumu->c, cumu->omega, cumu->ct, cumu->size);
+    compute_post_collision_pdf(cumu->ct, cumu->shift, cumu->ft, cumu->size);
+    apply_streaming(cumu->ft, cumu->f, cumu->size);
+    apply_boundary_condition(cumu->ft, LidU, cumu->f, cumu->size);
+}
+
+void output(Cumu *cumu, string &&path) {
+    auto size = cumu->size;
+    int n = size[0] * size[1] * size[2];
+#pragma acc update self(cumu->f[ : n], cumu->shift[ : n])
+    FILE *file = fopen(path.c_str(), "w");
+    fprintf(file, "x,y,z,u,v,w,p\n");
+    for (int k = GhostLattice; k < size[2] - GhostLattice; k++) {
+        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+            for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+                int id = index(i, j, k, size);
+                double U[D], rho;
+                pdf_to_macroscopic(cumu->f[id], cumu->shift[id], U, rho);
+                double p = (rho - 1) * Csq;
+                fprintf(file, "%e,%e,%e,%lf,%lf,%lf,%lf\n", (i - GhostLattice + 0.5) * LatticeL - 0.5 * CavityL_,
+                        (j - GhostLattice + 0.5) * LatticeL - 0.5 * CavityL_,
+                        (k - GhostLattice + 0.5) * LatticeL - 0.5 * CavityL_, U[0] * CharU_, U[1] * CharU_,
+                        U[2] * CharU_, p * CharP_);
+            }
+        }
+    }
+    fclose(file);
+}
+
+int main() {
+    const int size[D] = {CavityL_ * LatticesPerL + 2 * GhostLattice, CavityL_ * LatticesPerL + 2 * GhostLattice,
+                         CavityL_ * LatticesPerL + 2 * GhostLattice};
+    Cumu *cumu = init(size, 1. / Tau);
+    for (int step = 0; step < MaxStep; step++) {
+        main_loop(cumu);
+        printf("\r%d/%d", step + 1, MaxStep);
+        fflush(stdout);
+    }
+    printf("\n");
+    output(cumu, "output/o.csv");
+    finalize(cumu);
 }
