@@ -16,7 +16,7 @@ T sq(T a) {
 
 template <typename T>
 void copy_array(const T src[], T dst[], const int n) {
-#pragma acc kernels loop independent present(src[:n], dst[:n])
+#pragma acc kernels loop independent present(src[ : n], dst[ : n])
     for (int i = 0; i < n; i++) {
         dst[i] = src[i];
     }
@@ -24,7 +24,7 @@ void copy_array(const T src[], T dst[], const int n) {
 
 template <typename T, int N>
 void copy_array(const T src[][N], T dst[][N], const int n) {
-#pragma acc kernels loop independent present(src[:n], dst[:n])
+#pragma acc kernels loop independent present(src[ : n], dst[ : n])
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < N; j++) {
             dst[i][j] = src[i][j];
@@ -107,6 +107,7 @@ const double CharNu_ = CharL_ * CharU_;
 const double Nu_ = CavityL_ * LidU_ / Re;
 const double Nu = Nu_ / CharNu_;
 const double Tau = Nu * CsqI + 0.5;
+const double Omega = 1. / Tau;
 const double LatticeRe = LidU * LatticeL / Nu;
 const double Dt = 1;
 const double CharT_ = CharL_ / CharU_;
@@ -616,31 +617,6 @@ void apply_streaming(const double ft[][Q], double f[][Q], const int size[D]) {
 
 void apply_boundary_condition(const double ft[][Q], const double lid_u, double f[][Q], const int size[D]) {
     int n = size[0] * size[1] * size[2];
-    // bottom wall
-#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
-    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
-        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
-            int id = index(i, j, GhostLattice, size);
-            int qlist[] = {_LLR, _LOR, _LRR, _OLR, _OOR, _ORR, _RLR, _ROR, _RRR};
-#pragma acc loop seq
-            for (auto q : qlist) {
-                f[id][q] = ft[id][link(q)];
-            }
-        }
-    }
-    // top moving wall
-#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n], Vel, Wght) copyin(size[ : D])
-    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
-        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
-            int id = index(i, j, size[2] - GhostLattice - 1, size);
-            int qlist[] = {_LLL, _LOL, _LRL, _OLL, _OOL, _ORL, _RLL, _ROL, _RRL};
-#pragma acc loop seq
-            for (auto q : qlist) {
-                int lq = link(q);
-                f[id][q] = ft[id][lq] - 2 * Wght[lq] * Vel[lq][0] * lid_u * CsqI;
-            }
-        }
-    }
     // left wall
 #pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
     for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
@@ -686,6 +662,31 @@ void apply_boundary_condition(const double ft[][Q], const double lid_u, double f
 #pragma acc loop seq
             for (auto q : qlist) {
                 f[id][q] = ft[id][link(q)];
+            }
+        }
+    }
+    // bottom wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n]) copyin(size[ : D])
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+            int id = index(i, j, GhostLattice, size);
+            int qlist[] = {_LLR, _LOR, _LRR, _OLR, _OOR, _ORR, _RLR, _ROR, _RRR};
+#pragma acc loop seq
+            for (auto q : qlist) {
+                f[id][q] = ft[id][link(q)];
+            }
+        }
+    }
+    // top moving wall
+#pragma acc kernels loop independent collapse(2) present(ft[ : n], f[ : n], Vel, Wght) copyin(size[ : D])
+    for (int i = GhostLattice; i < size[0] - GhostLattice; i++) {
+        for (int j = GhostLattice; j < size[1] - GhostLattice; j++) {
+            int id = index(i, j, size[2] - GhostLattice - 1, size);
+            int qlist[] = {_LLL, _LOL, _LRL, _OLL, _OOL, _ORL, _RLL, _ROL, _RRL};
+#pragma acc loop seq
+            for (auto q : qlist) {
+                int lq = link(q);
+                f[id][q] = ft[id][lq] - 2 * Wght[lq] * Vel[lq][0] * lid_u * CsqI;
             }
         }
     }
